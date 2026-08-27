@@ -6,7 +6,7 @@ import pytest
 from telegramscrap.analysis import _TME_BASE_RE, _TME_RE, _count_comments, combine
 from telegramscrap.cli import build_parser
 from telegramscrap.datafiles import clean_xml_text, format_duration, read_table, save_table
-from telegramscrap.scrape import channel_slug, parse_date
+from telegramscrap.scrape import _channel_ref, channel_slug, parse_date
 
 
 def test_clean_xml_text_handles_none_and_control_chars():
@@ -53,6 +53,20 @@ def test_count_comments_from_json_string():
 )
 def test_channel_slug(raw, expected):
     assert channel_slug(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,arg,slug,url_base",
+    [
+        ("@durov", "@durov", "durov", "https://t.me/durov"),
+        ("https://t.me/durov/9", "https://t.me/durov/9", "durov", "https://t.me/durov"),
+        ("-1001629147115", -1001629147115, "c1629147115", "https://t.me/c/1629147115"),
+        ("1629147115", 1629147115, "c1629147115", "https://t.me/c/1629147115"),
+    ],
+)
+def test_channel_ref(raw, arg, slug, url_base):
+    ref = _channel_ref(raw)
+    assert (ref.arg, ref.slug, ref.url_base) == (arg, slug, url_base)
 
 
 def test_save_table_keeps_dotted_name(tmp_path):

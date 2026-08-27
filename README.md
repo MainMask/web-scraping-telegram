@@ -54,6 +54,7 @@ telegramscrap <command> [options]        # or:  python -m telegramscrap <command
 
 | Command   | What it does |
 |-----------|--------------|
+| `menu`    | interactive wizard that asks questions, then builds and runs a command |
 | `login`   | authorise once (asks for the Telegram code), save the session |
 | `scrape`  | scrape channels/groups into `.parquet` or `.xlsx` |
 | `read`    | print the head of a data file, optionally convert it |
@@ -64,6 +65,12 @@ telegramscrap <command> [options]        # or:  python -m telegramscrap <command
 | `links`   | extract and count `t.me` links from `Content` (snowball sampling) |
 
 Run `telegramscrap <command> --help` for the full flag list.
+
+### Interactive menu
+
+Not sure which flags you need? Run `telegramscrap` with no arguments (or
+`telegramscrap menu`): it walks you through the options, prints the equivalent
+`telegramscrap …` command, and runs it. Every flag below still works directly.
 
 ### Scrape
 
@@ -78,9 +85,27 @@ telegramscrap scrape \
 A channel may be given as `@name`, `t.me/name` or a full `https://t.me/name` URL — all are
 reduced to `name`, and the `Group` column is stored normalised as `@name`.
 
+It may also be a **numeric ID** such as `-1001629147115` (the form Telegram clients and
+`t.me/c/1629147115/…` links use) — handy for private channels that have no username. The
+logged-in account must already be a member of that channel (or have it in its dialogs) for
+the ID to resolve. For an ID-only channel the `Group` column and file names use
+`@c<short_id>` and links are `https://t.me/c/<short_id>/…`.
+
 Useful flags: `--channels-file channels.txt` (comma- or newline-separated), `--keyword <term>`,
 `--max-messages <n>`, `--timeout <seconds>` (`0` = no limit), `--no-comments` (skip the
-per-post comment fetch), `--session <name>`, `--format {parquet,excel}`.
+per-post comment fetch), `--collect-reactors` (see below), `--session <name>`,
+`--format {parquet,excel}`.
+
+`--collect-reactors` also writes a separate `FINAL_<name>_reactors_with_<n>` file with one
+row per *(user, message, reaction)*: who (`id` + `username`) put which emoji, and on what.
+It is **opt-in and slow** — one extra API call per message that has reactions. Telegram
+refuses the reactors list for **broadcast-channel posts** (to prevent de-anonymisation), so
+those are skipped with a note; in practice this flag captures the reactions left on the
+**comments**, and therefore needs the comment fetch enabled (not `--no-comments`).
+
+On a busy channel this is easily thousands of requests; Telegram may answer with
+`FloodWaitError` (logged and skipped) or, worst case, a temporary soft ban. Keep runs
+small with `--max-messages` / a narrow date range.
 
 Output is **parquet** by default. Use `--format excel` only for small runs — Excel truncates
 any cell over 32,767 characters (the `Comments List` of a busy post easily exceeds that);
@@ -90,11 +115,15 @@ Comments are fetched only for posts that actually have a linked discussion threa
 
 Both `--date-min` and `--date-max` are **inclusive**; `--date-max` covers the whole day (UTC).
 
-Output files land in `--out-dir` (`<slug>` is the channel name without `@`):
+Output files land in `--out-dir` (`<slug>` is the channel name without `@`, or
+`c<short_id>` for a numeric-ID channel):
 
 - `backup_<name>_until_<n>_<slug>_ID<id>.<ext>` — written every 1,000 messages
 - `complete_<slug>_in_<name>_until_<n>.<ext>` — after each channel finishes
 - `FINAL_<name>_with_<n>.<ext>` — the full run
+- `FINAL_<name>_reactors_with_<n>.<ext>` — only with `--collect-reactors`; one row per
+  *(user, message, reaction)*, columns:
+  `Type, Target, Group, Message ID, Post ID, Url, Reactor ID, Reactor Username, Reaction, Date`
 
 ### Analyse
 
@@ -114,6 +143,10 @@ The `Comments List` column holds comments as a JSON string — decode it when ex
 ## Output columns
 
 `Type, Group, Author ID, Content, Date, Message ID, Author, Views, Reactions, Shares, Media, Url, Comments List`
+
+Each entry inside the `Comments List` JSON carries `Comment Author ID` **and**
+`Comment Author Username` (`""` if the commenter has none, `[channel]` / `[anonymous]`
+when the reply was sent by a channel or anonymously).
 
 ## Notes
 
@@ -140,6 +173,7 @@ The tests are offline (no Telegram, no credentials) and cover the pure helpers.
 ```
 telegramscrap/
   cli.py         argparse entry point + sub-command dispatch
+  menu.py        interactive input()-based wizard over the CLI flags
   config.py      load TG_* credentials from .env
   scrape.py      async scraper (asyncio.run)
   analysis.py    combine / summary / sample / filter / links

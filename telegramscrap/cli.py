@@ -48,6 +48,7 @@ def cmd_scrape(args) -> None:
         out_dir=Path(args.out_dir),
         session=args.session,
         with_comments=not args.no_comments,
+        with_reactors=args.collect_reactors,
     )
     run(load_credentials(), params)
 
@@ -57,6 +58,12 @@ def cmd_login(args) -> None:
     from telegramscrap.login import login
 
     login(load_credentials(), args.session)
+
+
+def cmd_menu(args) -> None:
+    from telegramscrap.menu import run_menu
+
+    run_menu()
 
 
 def cmd_read(args) -> None:
@@ -106,7 +113,10 @@ def cmd_links(args) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="telegramscrap", description=__doc__)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=False)
+
+    mn = sub.add_parser("menu", help="interactive menu that builds and runs a command for you")
+    mn.set_defaults(func=cmd_menu)
 
     lg = sub.add_parser("login", help="authorise once (asks for the Telegram code) and save the session")
     lg.add_argument("--session", default="telegramscrap",
@@ -129,6 +139,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--session", default="telegramscrap",
                    help="session name/path (default: ./telegramscrap.session)")
     s.add_argument("--no-comments", action="store_true", help="skip fetching per-message comments (much faster)")
+    s.add_argument("--collect-reactors", action="store_true",
+                   help="also fetch per-user reaction lists (id + username + emoji) into a separate "
+                        "FINAL_<name>_reactors file. Slow: one API call per reacted message. Telegram "
+                        "refuses this for broadcast-channel posts (skipped), so it mainly captures "
+                        "reactions on the comments and needs the comment fetch enabled.")
     s.set_defaults(func=cmd_scrape)
 
     r = sub.add_parser("read", help="print the head of a data file and optionally convert it")
@@ -178,6 +193,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    if getattr(args, "func", None) is None:  # `telegramscrap` with no arguments
+        cmd_menu(args)
+        return
     args.func(args)
 
 
