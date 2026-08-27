@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telegramscrap"
+version = "2.0.0"
+description = "Terminal tool for scraping and analysing Telegram channels, groups and chats"
+requires-python = ">=3.11"
+dependencies = [
+    "telethon",
+    "python-dotenv",
+    "pandas",
+    "numpy",
+    "tqdm",
+    "pyarrow",
+    "openpyxl",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+telegramscrap = "telegramscrap.cli:main"
+
+[tool.setuptools]
+packages = ["telegramscrap"]

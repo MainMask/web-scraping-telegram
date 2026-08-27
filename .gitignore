@@ -1,0 +1,8 @@
+.env
+*.session
+*.session-journal
+output/
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
