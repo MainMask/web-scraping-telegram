@@ -113,7 +113,8 @@ any cell over 32,767 characters (the `Comments List` of a busy post easily excee
 
 Comments are fetched only for posts that actually have a linked discussion thread.
 
-Both `--date-min` and `--date-max` are **inclusive**; `--date-max` covers the whole day (UTC).
+Dates may be written as `DD.MM.YYYY` (e.g. `15.10.2024`) or ISO `YYYY-MM-DD`. Both
+`--date-min` and `--date-max` are **inclusive**; `--date-max` covers the whole day (UTC).
 
 Output files land in `--out-dir` (`<slug>` is the channel name without `@`, or
 `c<short_id>` for a numeric-ID channel):

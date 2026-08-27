@@ -33,6 +33,18 @@ def test_parse_date_end_of_day_is_utc():
     assert d.tzinfo is not None
 
 
+def test_parse_date_accepts_dotted_and_iso():
+    dotted = parse_date("10.07.2015")
+    assert (dotted.year, dotted.month, dotted.day) == (2015, 7, 10)
+    assert dotted == parse_date("2015-07-10")
+    assert parse_date("10.07.2015", end_of_day=True).hour == 23
+
+
+def test_parse_date_rejects_garbage():
+    with pytest.raises(SystemExit):
+        parse_date("not-a-date")
+
+
 def test_count_comments_from_json_string():
     payload = '[{"Type": "comment"}, {"Type": "comment"}, {"Type": "text"}]'
     assert _count_comments(payload) == 2

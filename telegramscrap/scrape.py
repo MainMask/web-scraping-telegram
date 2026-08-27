@@ -70,7 +70,15 @@ def _channel_ref(raw: str) -> _ChannelRef:
 
 
 def parse_date(value: str, *, end_of_day: bool = False) -> datetime:
-    dt = datetime.fromisoformat(value)
+    """Accept 'DD.MM.YYYY' or an ISO date ('YYYY-MM-DD')."""
+    value = value.strip()
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        try:
+            dt = datetime.strptime(value, "%d.%m.%Y")
+        except ValueError:
+            raise SystemExit(f"Bad date {value!r}: use DD.MM.YYYY or YYYY-MM-DD")
     if end_of_day and dt.time() == datetime.min.time():
         dt = dt.replace(hour=23, minute=59, second=59)
     return dt.replace(tzinfo=timezone.utc)

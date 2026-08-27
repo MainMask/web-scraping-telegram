@@ -47,8 +47,8 @@ def _scrape_argv(p: Prompt) -> list[str]:
     channels = p.text("Channels: @name / numeric id (-100...), comma-separated, or path to a .txt file",
                       required=True)
     argv += ["--channels-file", channels] if Path(channels).is_file() else ["--channels", channels]
-    argv += ["--date-min", p.text("Date from (YYYY-MM-DD)", required=True)]
-    argv += ["--date-max", p.text("Date to (YYYY-MM-DD)", required=True)]
+    argv += ["--date-min", p.text("Date from (DD.MM.YYYY)", required=True)]
+    argv += ["--date-max", p.text("Date to (DD.MM.YYYY)", required=True)]
     argv += ["--name", p.text("Output file base name", required=True)]
     _opt(argv, "--keyword", p.text("Keyword filter", ""), "")
     _opt(argv, "--max-messages", p.text("Max messages", "1000000"), "1000000")
