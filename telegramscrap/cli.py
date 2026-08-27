@@ -89,6 +89,12 @@ def cmd_comments(args) -> None:
     explode_comments(args.input, args.output, args.format)
 
 
+def cmd_participants(args) -> None:
+    from telegramscrap.analysis import participants
+
+    participants(args.input, args.output, args.reactors, args.format)
+
+
 def cmd_summary(args) -> None:
     from telegramscrap.analysis import summary
 
@@ -169,6 +175,14 @@ def build_parser() -> argparse.ArgumentParser:
     cm.add_argument("--output", required=True)
     cm.add_argument("--format", choices=["parquet", "excel"], default="parquet")
     cm.set_defaults(func=cmd_comments)
+
+    pt = sub.add_parser("participants",
+                        help="unique ID + username + name of everyone who commented or reacted")
+    pt.add_argument("--input", required=True, help="a scraped posts parquet/xlsx (needs Comments List)")
+    pt.add_argument("--output", required=True)
+    pt.add_argument("--reactors", help="reactors file (default: auto-detect *reactors* next to --input)")
+    pt.add_argument("--format", choices=["parquet", "excel"], default="parquet")
+    pt.set_defaults(func=cmd_participants)
 
     m = sub.add_parser("summary", help="per-group monthly summary tables (contents/comments/total)")
     m.add_argument("--input", required=True)

@@ -60,6 +60,7 @@ telegramscrap <command> [options]        # or:  python -m telegramscrap <command
 | `read`    | print the head of a data file, optionally convert it |
 | `combine` | merge many `.parquet` files, drop duplicates, recount comments |
 | `comments`| flatten `Comments List` into a table with one row per comment |
+| `participants`| unique `ID` + `username` + `name` of everyone who commented or reacted |
 | `summary` | per-group monthly tables (contents / comments / total) |
 | `sample`  | proportional per-category sample to `.xlsx` |
 | `filter`  | keep rows matching keywords, add one 0/1 column per keyword |
@@ -125,13 +126,14 @@ Output files land in `--out-dir` (`<slug>` is the channel name without `@`, or
 - `FINAL_<name>_with_<n>.<ext>` — the full run
 - `FINAL_<name>_reactors_with_<n>.<ext>` — only with `--collect-reactors`; one row per
   *(user, message, reaction)*, columns:
-  `Type, Target, Group, Message ID, Post ID, Url, Reactor ID, Reactor Username, Reaction, Date`
+  `Type, Target, Group, Message ID, Post ID, Url, Reactor ID, Reactor Username, Reactor Name, Reaction, Date`
 
 ### Analyse
 
 ```bash
-telegramscrap combine  --input 'output/*.parquet' --output output/unified.parquet
-telegramscrap comments --input output/unified.parquet --output output/comments.parquet
+telegramscrap combine      --input 'output/*.parquet' --output output/unified.parquet
+telegramscrap comments     --input output/unified.parquet --output output/comments.parquet
+telegramscrap participants  --input output/FINAL_Test_with_00500.parquet --output output/people.xlsx
 telegramscrap summary  --input output/unified.parquet --output-base output/resume
 telegramscrap filter   --input output/unified.parquet --output output/kw --keywords "Trump,Biden,Kamala"
 telegramscrap sample   --input output/unified.parquet --output output/sample.xlsx --sample-size 10000
@@ -141,7 +143,13 @@ telegramscrap read     output/unified.parquet --head 20 --to xlsx
 
 The `Comments List` column holds comments as a JSON string — `telegramscrap comments`
 explodes it into a flat table (one row per comment, with `Comment Author ID` /
-`Comment Author Username`), `--format excel` for a spreadsheet.
+`Comment Author Username` / `Comment Author Name`), `--format excel` for a spreadsheet.
+
+`telegramscrap participants` goes further: it merges the commenters with the
+`FINAL_<name>_reactors_*` file it finds next to `--input` and writes one row per
+person — `ID, Username, Name, Comments, Reactions, Total`. `Username` / `Name` are
+blank when Telegram has none for that account (only the numeric `ID` identifies them);
+`Name` is only populated for data scraped after this feature was added.
 
 ---
 
@@ -181,7 +189,7 @@ telegramscrap/
   menu.py        interactive input()-based wizard over the CLI flags
   config.py      load TG_* credentials from .env
   scrape.py      async scraper (asyncio.run)
-  analysis.py    combine / comments / summary / sample / filter / links
+  analysis.py    combine / comments / participants / summary / sample / filter / links
   datafiles.py   read/write parquet·xlsx·csv, text cleaning
 tests/           offline tests for the helpers
 ```

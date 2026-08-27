@@ -53,8 +53,8 @@ def _reactions_list_response():
                 reaction=ReactionEmoji(emoticon="👍"),
             ),
         ],
-        users=[User(id=777, username="bob")],
-        chats=[],
+        users=[User(id=777, username="bob", first_name="Bob", last_name="Ivanov")],
+        chats=[Channel(id=888, title="Disc Grp", photo=None, date=None)],
         next_offset=None,
         count=2,
     )
@@ -86,7 +86,7 @@ class FakeClient:
             if reply_to is not None:
                 if reply_to == 20:
                     yield _msg(999, datetime(2024, 6, 5, tzinfo=timezone.utc), "a reply",
-                               sender=User(id=777, username="bob"))
+                               sender=User(id=777, username="bob", first_name="Bob", last_name="Ivanov"))
                     yield _msg(998, datetime(2024, 6, 5, tzinfo=timezone.utc), "anon reply",
                                sender=Channel(id=888, title="disc", photo=None, date=None),
                                reacts=False)
@@ -132,6 +132,7 @@ def test_scrape_end_to_end(fake_client, tmp_path):
     assert "[custom:" in df.iloc[0]["Reactions"]
     assert '"Comment Content": "a reply"' in df.iloc[1]["Comments List"]  # post 20 had a thread
     assert '"Comment Author Username": "bob"' in df.iloc[1]["Comments List"]
+    assert '"Comment Author Name": "Bob Ivanov"' in df.iloc[1]["Comments List"]
     assert '"Comment Author Username": "[channel]"' in df.iloc[1]["Comments List"]  # anon reply
     assert df.iloc[0]["Comments List"] == "[]"           # post 30 had no thread
 
@@ -164,9 +165,11 @@ def test_scrape_collect_reactors(fake_client, tmp_path):
 
     by_id = r.set_index("Reactor ID")
     assert by_id.loc[777, "Reactor Username"] == "bob"
+    assert by_id.loc[777, "Reactor Name"] == "Bob Ivanov"
     assert by_id.loc[777, "Reaction"] == "🔥"
     assert by_id.loc[777, "Date"] == "2024-06-05 00:00:00"
     assert by_id.loc[_CHANNEL_PEER_ID, "Reactor Username"] == "[channel]"
+    assert by_id.loc[_CHANNEL_PEER_ID, "Reactor Name"] == "Disc Grp"
 
     # comment reactions must target the discussion group (replies.channel_id), not
     # the broadcast channel — otherwise Telegram answers BroadcastForbiddenError

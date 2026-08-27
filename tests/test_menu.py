@@ -120,6 +120,18 @@ def test_comments_argv(tmp_path, monkeypatch):
     _valid(argv)
 
 
+def test_participants_argv(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "FINAL_a.parquet").write_bytes(b"x")
+    from telegramscrap.menu import _participants_argv
+
+    argv = _participants_argv(_prompt(["1", "output/people.xlsx", "2"]))  # "2" -> excel
+    assert argv == ["participants", "--input", "output/FINAL_a.parquet",
+                    "--output", "output/people.xlsx", "--format", "excel"]
+    _valid(argv)
+
+
 def test_menu_runs_selected_command_then_quits():
     calls = []
     answers = ["1", "@a", "2025-01-01", "2025-01-02", "t",

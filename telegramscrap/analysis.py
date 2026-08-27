@@ -71,12 +71,17 @@ def combine(inputs: str, output: str, dedup_cols: list[str]) -> None:
     print(f"Saved: {output}")
 
 
-def explode_comments(input_path: str, output: str, fmt: str = "parquet") -> None:
-    """Flatten the Comments List JSON into a flat table: one row per comment."""
-    df = read_table(input_path)
-    _require_columns(df, ["Comments List", "Group", "Message ID"], input_path)
-    rows = []
-    for post in tqdm(df.to_dict(orient="records"), desc="Exploding comments"):
+def _save(df: pd.DataFrame, output: str, fmt: str) -> Path:
+    """Honour an explicit .parquet/.xlsx/.csv suffix on `output`, otherwise use `fmt`."""
+    if Path(output).suffix.lower() in (".parquet", ".xlsx", ".csv"):
+        fmt = None
+    return save_table(df, output, fmt)
+
+
+def _comment_pairs(df: pd.DataFrame) -> list[tuple[dict, dict]]:
+    """(post_row, comment_dict) for every comment in the Comments List column."""
+    pairs = []
+    for post in df.to_dict(orient="records"):
         raw = post.get("Comments List")
         if isinstance(raw, str):
             items = json.loads(raw) if raw.strip() else []
@@ -84,32 +89,95 @@ def explode_comments(input_path: str, output: str, fmt: str = "parquet") -> None
             items = raw
         else:
             items = []
-        for c in items:
-            if c.get("Type") != "comment":
-                continue
-            rows.append({
-                "Group": post["Group"],
-                "Post ID": post["Message ID"],
-                "Post Url": post.get("Url", ""),
-                "Comment Author ID": c.get("Comment Author ID"),
-                "Comment Author Username": c.get("Comment Author Username", ""),
-                "Comment Content": c.get("Comment Content", ""),
-                "Comment Date": c.get("Comment Date", ""),
-                "Comment Message ID": c.get("Comment Message ID"),
-                "Comment Author": c.get("Comment Author"),
-                "Comment Views": c.get("Comment Views"),
-                "Comment Reactions": c.get("Comment Reactions", ""),
-                "Comment Shares": c.get("Comment Shares"),
-                "Comment Media": c.get("Comment Media"),
-                "Comment Url": c.get("Comment Url", ""),
-            })
+        pairs += [(post, c) for c in items if c.get("Type") == "comment"]
+    return pairs
+
+
+def explode_comments(input_path: str, output: str, fmt: str = "parquet") -> None:
+    """Flatten the Comments List JSON into a flat table: one row per comment."""
+    df = read_table(input_path)
+    _require_columns(df, ["Comments List", "Group", "Message ID"], input_path)
+    rows = []
+    for post, c in tqdm(_comment_pairs(df), desc="Exploding comments"):
+        rows.append({
+            "Group": post["Group"],
+            "Post ID": post["Message ID"],
+            "Post Url": post.get("Url", ""),
+            "Comment Author ID": c.get("Comment Author ID"),
+            "Comment Author Username": c.get("Comment Author Username", ""),
+            "Comment Author Name": c.get("Comment Author Name", ""),
+            "Comment Content": c.get("Comment Content", ""),
+            "Comment Date": c.get("Comment Date", ""),
+            "Comment Message ID": c.get("Comment Message ID"),
+            "Comment Author": c.get("Comment Author"),
+            "Comment Views": c.get("Comment Views"),
+            "Comment Reactions": c.get("Comment Reactions", ""),
+            "Comment Shares": c.get("Comment Shares"),
+            "Comment Media": c.get("Comment Media"),
+            "Comment Url": c.get("Comment Url", ""),
+        })
     if not rows:
         raise SystemExit(f"{input_path}: no comments in 'Comments List'.")
     out = pd.DataFrame(rows)
     for col in ("Comment Author ID", "Comment Message ID", "Comment Views", "Comment Shares"):
         out[col] = pd.to_numeric(out[col], errors="coerce").astype("Int64")  # keep ints, allow <NA>
-    save_table(out, output, fmt)
-    print(f"Saved: {output} ({len(rows)} comments)")
+    print(f"Saved: {_save(out, output, fmt)} ({len(rows)} comments)")
+
+
+_NON_USER = {"[channel]", "[anonymous]"}
+
+
+def _first_nonempty(series) -> str:
+    return next((x for x in series if x), "")
+
+
+def _sibling_reactors(input_path: str) -> list[Path]:
+    d = Path(input_path).parent
+    return sorted(d.glob("*reactors*.parquet")) + sorted(d.glob("*reactors*.xlsx"))
+
+
+def participants(input_path: str, output: str, reactors: str | None = None,
+                 fmt: str = "parquet") -> None:
+    """One row per unique person who commented or reacted: ID, username, name, counts."""
+    df = read_table(input_path)
+    _require_columns(df, ["Comments List"], input_path)
+
+    rows = [
+        {"ID": c.get("Comment Author ID"), "Username": c.get("Comment Author Username") or "",
+         "Name": c.get("Comment Author Name") or "", "Comments": 1, "Reactions": 0}
+        for _post, c in _comment_pairs(df)
+    ]
+    for rf in ([Path(reactors)] if reactors else _sibling_reactors(input_path)):
+        rdf = read_table(rf)
+        _require_columns(rdf, ["Reactor ID", "Reactor Username"], str(rf))
+        rows += [
+            {"ID": r.get("Reactor ID"), "Username": r.get("Reactor Username") or "",
+             "Name": r.get("Reactor Name") or "", "Comments": 0, "Reactions": 1}
+            for r in rdf.to_dict(orient="records")
+        ]
+        print(f"  + reactors from {rf.name}")
+
+    if not rows:
+        raise SystemExit(f"{input_path}: no commenters or reactors found.")
+
+    p = pd.DataFrame(rows)
+    p["ID"] = pd.to_numeric(p["ID"], errors="coerce").astype("Int64")
+    p = p[p["ID"].notna() & (p["ID"] > 0)]  # drop anonymous + channel/chat entities (negative IDs)
+    p["Username"] = p["Username"].apply(
+        lambda u: "" if not isinstance(u, str) or u in _NON_USER else u
+    )
+    p["Name"] = p["Name"].apply(lambda n: n if isinstance(n, str) else "")
+
+    agg = p.groupby("ID").agg(
+        Username=("Username", _first_nonempty),
+        Name=("Name", _first_nonempty),
+        Comments=("Comments", "sum"),
+        Reactions=("Reactions", "sum"),
+    ).reset_index()
+    agg["Total"] = agg["Comments"] + agg["Reactions"]
+    agg = agg.sort_values("Total", ascending=False, ignore_index=True)
+
+    print(f"Saved: {_save(agg, output, fmt)} ({len(agg)} people)")
 
 
 def summary(input_path: str, output_base: str, date_col: str, group_col: str, comments_col: str) -> None:

@@ -5,7 +5,9 @@ import json
 import pandas as pd
 import pytest
 
-from telegramscrap.analysis import _TME_BASE_RE, _TME_RE, _count_comments, combine, explode_comments
+from telegramscrap.analysis import (
+    _TME_BASE_RE, _TME_RE, _count_comments, combine, explode_comments, participants,
+)
 from telegramscrap.cli import build_parser
 from telegramscrap.datafiles import clean_xml_text, format_duration, read_table, save_table
 from telegramscrap.scrape import _channel_ref, channel_slug, parse_date
@@ -96,21 +98,24 @@ def test_combine_errors_on_empty_inputs(tmp_path):
         combine(str(tmp_path / "*.parquet"), str(tmp_path / "out.parquet"), ["Group", "Message ID"])
 
 
-def _posts_with_comments(tmp_path):
+def _posts_with_comments(tmp_path, name="posts.parquet"):
     comment = {
         "Type": "comment", "Comment Author ID": 5, "Comment Author Username": "bob",
-        "Comment Content": "hi", "Comment Date": "2025-01-01 00:00:00",
-        "Comment Message ID": 100, "Comment Author": None, "Comment Views": None,
-        "Comment Reactions": "", "Comment Shares": 0, "Comment Media": False,
+        "Comment Author Name": "Bob B", "Comment Content": "hi",
+        "Comment Date": "2025-01-01 00:00:00", "Comment Message ID": 100,
+        "Comment Author": None, "Comment Views": None, "Comment Reactions": "",
+        "Comment Shares": 0, "Comment Media": False,
         "Comment Url": "https://t.me/c/1/10?comment=100",
     }
+    anon = {"Type": "comment", "Comment Author ID": None,
+            "Comment Author Username": "[anonymous]", "Comment Author Name": ""}
     df = pd.DataFrame({
         "Group": ["@c1", "@c1"],
         "Message ID": [10, 11],
         "Url": ["https://t.me/c/1/10", "https://t.me/c/1/11"],
-        "Comments List": [json.dumps([comment]), "[]"],
+        "Comments List": [json.dumps([comment, anon]), "[]"],
     })
-    src = tmp_path / "posts.parquet"
+    src = tmp_path / name
     df.to_parquet(src)
     return src
 
@@ -119,13 +124,13 @@ def test_explode_comments(tmp_path):
     out = tmp_path / "comments.parquet"
     explode_comments(str(_posts_with_comments(tmp_path)), str(out))
     r = read_table(out)
-    assert len(r) == 1
-    assert list(r.columns[:5]) == [
-        "Group", "Post ID", "Post Url", "Comment Author ID", "Comment Author Username"
-    ]
-    assert r.iloc[0]["Comment Author Username"] == "bob"
-    assert r.iloc[0]["Post ID"] == 10
-    assert r.iloc[0]["Post Url"] == "https://t.me/c/1/10"
+    assert len(r) == 2
+    assert "Comment Author Name" in r.columns
+    row = r[r["Comment Author ID"] == 5].iloc[0]
+    assert row["Comment Author Username"] == "bob"
+    assert row["Comment Author Name"] == "Bob B"
+    assert row["Post ID"] == 10
+    assert row["Post Url"] == "https://t.me/c/1/10"
 
 
 def test_explode_comments_errors_when_empty(tmp_path):
@@ -134,6 +139,34 @@ def test_explode_comments_errors_when_empty(tmp_path):
     )
     with pytest.raises(SystemExit):
         explode_comments(str(tmp_path / "posts.parquet"), str(tmp_path / "out.parquet"))
+
+
+def test_participants_merges_commenters_and_reactors(tmp_path):
+    src = _posts_with_comments(tmp_path, "FINAL_x_with_00002.parquet")
+    pd.DataFrame({
+        "Reactor ID": [5, 5, 9, -1001490082514],
+        "Reactor Username": ["", "", "ann", "[channel]"],
+        "Reactor Name": ["Bob B", "Bob B", "Ann A", "Some Chan"],
+        "Reaction": ["👍", "🔥", "👍", "❤"],
+    }).to_parquet(tmp_path / "FINAL_x_reactors_with_00004.parquet")
+
+    out = tmp_path / "people.parquet"
+    participants(str(src), str(out))
+    p = read_table(out).set_index("ID")
+
+    assert set(p.index) == {5, 9}  # anonymous comment (ID None) + channel (negative ID) dropped
+    assert list(read_table(out).columns) == ["ID", "Username", "Name", "Comments", "Reactions", "Total"]
+    assert (p.loc[5, "Comments"], p.loc[5, "Reactions"], p.loc[5, "Total"]) == (1, 2, 3)
+    assert p.loc[5, "Username"] == "bob"          # from the comment
+    assert p.loc[5, "Name"] == "Bob B"
+    assert (p.loc[9, "Comments"], p.loc[9, "Reactions"]) == (0, 1)
+    assert p.loc[9, "Name"] == "Ann A"
+
+
+def test_participants_errors_when_nobody(tmp_path):
+    pd.DataFrame({"Comments List": ["[]"]}).to_parquet(tmp_path / "posts.parquet")
+    with pytest.raises(SystemExit):
+        participants(str(tmp_path / "posts.parquet"), str(tmp_path / "out.parquet"))
 
 
 def test_combine_custom_dedup_cols_without_message_id(tmp_path):

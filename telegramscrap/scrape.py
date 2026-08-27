@@ -111,6 +111,20 @@ def _sender_username(msg) -> str:
     return "[channel]"
 
 
+def _entity_name(entity) -> str:
+    """Display name: a User's first + last name, else a Channel/Chat title; '' if unknown."""
+    if entity is None:
+        return ""
+    name = " ".join(
+        p for p in (getattr(entity, "first_name", None), getattr(entity, "last_name", None)) if p
+    )
+    return name or getattr(entity, "title", "") or ""
+
+
+def _sender_name(msg) -> str:
+    return _entity_name(getattr(msg, "sender", None))
+
+
 async def _collect_reactors(client, peer, ref: _ChannelRef, post_id: int, msg, target: str) -> list[dict]:
     """Per-user reaction list for one message (`target` is 'post' or 'comment').
 
@@ -131,11 +145,17 @@ async def _collect_reactors(client, peer, ref: _ChannelRef, post_id: int, msg, t
             res = await client(
                 GetMessageReactionsListRequest(peer=peer, id=msg.id, limit=100, offset=offset)
             )
-            usernames = {u.id: (u.username or "") for u in res.users}
+            entities = {e.id: e for e in (*res.users, *res.chats)}
             for pr in res.reactions:
                 peer_id = pr.peer_id
+                eid = (
+                    getattr(peer_id, "user_id", None)
+                    or getattr(peer_id, "channel_id", None)
+                    or getattr(peer_id, "chat_id", None)
+                )
+                ent = entities.get(eid)
                 if isinstance(peer_id, PeerUser):
-                    rid, uname = peer_id.user_id, usernames.get(peer_id.user_id, "")
+                    rid, uname = peer_id.user_id, (getattr(ent, "username", "") or "")
                 else:  # PeerChannel / PeerChat
                     rid, uname = utils.get_peer_id(peer_id), "[channel]"
                 rows.append(
@@ -148,6 +168,7 @@ async def _collect_reactors(client, peer, ref: _ChannelRef, post_id: int, msg, t
                         "Url": url,
                         "Reactor ID": rid,
                         "Reactor Username": uname,
+                        "Reactor Name": _entity_name(ent),
                         "Reaction": _reaction_emoji(pr.reaction),
                         "Date": pr.date.strftime("%Y-%m-%d %H:%M:%S") if pr.date else "",
                     }
@@ -182,6 +203,7 @@ async def _collect_comments(
                     "Comment Group": f"@{ref.slug}",
                     "Comment Author ID": c.sender_id,
                     "Comment Author Username": _sender_username(c),
+                    "Comment Author Name": _sender_name(c),
                     "Comment Content": (c.text or "").replace("'", '"'),
                     "Comment Date": c.date.strftime("%Y-%m-%d %H:%M:%S"),
                     "Comment Message ID": c.id,

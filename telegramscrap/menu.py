@@ -146,6 +146,15 @@ def _comments_argv(p: Prompt) -> list[str]:
     return argv
 
 
+def _participants_argv(p: Prompt) -> list[str]:
+    argv = ["participants", "--input", _ask_data_file(p, "Scraped posts file")]
+    argv += ["--output", p.text("Output path", required=True)]
+    fmt = p.choice("Format", ["parquet", "excel"], "parquet")
+    if fmt != "parquet":
+        argv += ["--format", fmt]
+    return argv
+
+
 def _login_argv(p: Prompt) -> list[str]:
     return ["login"]
 
@@ -156,11 +165,12 @@ _ACTIONS = {
     "2": ("read", "preview a data file, optionally convert it", _read_argv),
     "3": ("combine", "merge .parquet files, drop duplicates", _combine_argv),
     "4": ("comments", "flatten Comments List into one row per comment", _comments_argv),
-    "5": ("summary", "per-group monthly tables", _summary_argv),
-    "6": ("sample", "proportional per-category sample to .xlsx", _sample_argv),
-    "7": ("filter", "keep rows matching keywords", _filter_argv),
-    "8": ("links", "extract and count t.me links", _links_argv),
-    "9": ("login", "(re)authorise and save the session", _login_argv),
+    "5": ("participants", "ID + username + name of commenters & reactors", _participants_argv),
+    "6": ("summary", "per-group monthly tables", _summary_argv),
+    "7": ("sample", "proportional per-category sample to .xlsx", _sample_argv),
+    "8": ("filter", "keep rows matching keywords", _filter_argv),
+    "9": ("links", "extract and count t.me links", _links_argv),
+    "10": ("login", "(re)authorise and save the session", _login_argv),
 }
 
 
