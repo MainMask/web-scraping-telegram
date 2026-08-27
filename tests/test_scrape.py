@@ -21,7 +21,7 @@ def _msg(mid, date, text, *, replies=0, custom_reaction=False, sender=None, reac
         id=mid,
         date=date,
         text=text,
-        sender_id=-100,
+        sender_id=getattr(sender, "id", -100),
         sender=sender,
         post_author="Author",
         views=1,
@@ -116,16 +116,21 @@ def _params(tmp_path, **kw):
         name="unit.test",
         fmt="parquet",
         out_dir=tmp_path,
+        with_reactors=kw.pop("with_reactors", False),
         **kw,
     )
 
 
-def test_scrape_end_to_end(fake_client, tmp_path):
+def test_scrape_end_to_end(fake_client, tmp_path, capsys):
     path = scrape.run(Credentials(1, "hash"), _params(tmp_path))
     assert path.name == "unit.test_posts.parquet"
 
+    log = capsys.readouterr().out
+    assert "%" in log and "ETA" in log and ("█" in log or "░" in log)  # progress bar
+
     df = pd.read_parquet(path)
-    assert list(df["Message ID"]) == [30, 20]           # newer skipped, older breaks
+    assert list(df["Message ID"]) == ["30", "20"]        # newer skipped, older breaks
+    assert list(df["Comments"]) == [0, 2]                # post 30 no thread, post 20 two replies
     assert set(df["Group"]) == {"@SomeChannel"}          # URL form -> slug
     assert df.iloc[0]["Url"] == "https://t.me/SomeChannel/30"
     assert df.iloc[1]["Content"] == ""                   # None text -> ""
@@ -135,6 +140,11 @@ def test_scrape_end_to_end(fake_client, tmp_path):
     assert '"Comment Author Name": "Bob Ivanov"' in df.iloc[1]["Comments List"]
     assert '"Comment Author Username": "[channel]"' in df.iloc[1]["Comments List"]  # anon reply
     assert df.iloc[0]["Comments List"] == "[]"           # post 30 had no thread
+
+    people = pd.read_parquet(tmp_path / "unit.test_participants.parquet").set_index("ID")
+    assert people.loc[777, "Username"] == "bob"
+    assert people.loc[777, "Name"] == "Bob Ivanov"
+    assert people.loc[777, "Comments"] == 1
 
 
 def test_scrape_no_comments_flag(fake_client, tmp_path):
@@ -150,7 +160,7 @@ def test_scrape_numeric_channel_id(fake_client, tmp_path):
     assert (tmp_path / "unit.test_partial" / "c1629147115_until_00002.parquet").exists()
 
 
-def test_scrape_collect_reactors(fake_client, tmp_path):
+def test_scrape_reactors(fake_client, tmp_path):
     scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True))
 
     files = list(tmp_path.glob("unit.test_reactors.parquet"))
@@ -171,6 +181,9 @@ def test_scrape_collect_reactors(fake_client, tmp_path):
     assert by_id.loc[_CHANNEL_PEER_ID, "Reactor Username"] == "[channel]"
     assert by_id.loc[_CHANNEL_PEER_ID, "Reactor Name"] == "Disc Grp"
 
+    people = pd.read_parquet(tmp_path / "unit.test_participants.parquet").set_index("ID")
+    assert people.loc[777, "Reactions"] >= 1             # reactor folded into participants
+
     # comment reactions must target the discussion group (replies.channel_id), not
     # the broadcast channel — otherwise Telegram answers BroadcastForbiddenError
     assert any(getattr(p, "channel_id", None) == 1001 for p in FakeClient.reaction_peers)
@@ -187,3 +200,4 @@ def test_scrape_reactors_without_comments(fake_client, tmp_path):
     # only per-post attempts happen (all 403); must not crash, no reactors file
     scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True, with_comments=False))
     assert not list(tmp_path.glob("*reactors*"))
+    assert not list(tmp_path.glob("*participants*"))      # nothing to build -> skipped

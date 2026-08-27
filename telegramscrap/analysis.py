@@ -31,6 +31,32 @@ def _count_comments(comments_list) -> int:
     return sum(1 for item in comments_list if item.get("Type") == "comment")
 
 
+def normalize_posts(df: pd.DataFrame, dedup_cols=("Group", "Message ID"),
+                    source: str = "posts") -> pd.DataFrame:
+    """Drop duplicates, add the Comments count, coerce dtypes and sort newest-first."""
+    dedup_cols = list(dedup_cols)
+    _require_columns(df, dedup_cols + ["Date"], source)
+
+    if "Message ID" in df.columns:
+        df["Message ID"] = df["Message ID"].astype(str)
+    if "Group" in df.columns:
+        df["Group"] = df["Group"].apply(lambda x: x if str(x).startswith("@") else "@" + str(x))
+
+    dups = int(df.duplicated(subset=dedup_cols).sum())
+    print(f"Normalize: {len(df)} rows, {dups} duplicate(s) on {dedup_cols} dropped")
+    df = df.drop_duplicates(subset=dedup_cols)
+
+    df["Comments"] = [
+        _count_comments(row.get("Comments List"))
+        for row in tqdm(df.to_dict(orient="records"), desc="Counting comments")
+    ]
+    df["Comments"] = df["Comments"].astype(int)
+    if "Media" in df.columns:
+        df["Media"] = df["Media"].astype(bool)
+    df["Date"] = pd.to_datetime(df["Date"])
+    return df.sort_values(by="Date", ascending=False, ignore_index=True)
+
+
 def combine(inputs: str, output: str, dedup_cols: list[str]) -> None:
     """Concatenate parquet files, drop duplicates, recompute the Comments count."""
     paths = resolve_inputs(inputs)
@@ -41,28 +67,7 @@ def combine(inputs: str, output: str, dedup_cols: list[str]) -> None:
             frames.append(df)
     if not frames:
         raise SystemExit(f"No non-empty parquet files found in: {inputs}")
-    combined = pd.concat(frames, ignore_index=True)
-    _require_columns(combined, dedup_cols + ["Date"], inputs)
-
-    if "Message ID" in combined.columns:
-        combined["Message ID"] = combined["Message ID"].astype(str)
-    if "Group" in combined.columns:
-        combined["Group"] = combined["Group"].apply(lambda x: x if str(x).startswith("@") else "@" + str(x))
-
-    print(f"Rows before dedup: {len(combined)}")
-    print(f"Duplicates on {dedup_cols}: {combined.duplicated(subset=dedup_cols).sum()}")
-    combined = combined.drop_duplicates(subset=dedup_cols)
-    print(f"Rows after dedup: {len(combined)}")
-
-    combined["Comments"] = [
-        _count_comments(row.get("Comments List"))
-        for row in tqdm(combined.to_dict(orient="records"), desc="Counting comments")
-    ]
-    combined["Comments"] = combined["Comments"].astype(int)
-    if "Media" in combined.columns:
-        combined["Media"] = combined["Media"].astype(bool)
-    combined["Date"] = pd.to_datetime(combined["Date"])
-    combined = combined.sort_values(by="Date", ascending=False)
+    combined = normalize_posts(pd.concat(frames, ignore_index=True), dedup_cols, source=inputs)
 
     n_comments = int(combined["Comments"].sum())
     print(f"Rows: {len(combined)} | comments: {n_comments} | total: {len(combined) + n_comments}")
@@ -144,7 +149,12 @@ def _sibling_reactors(input_path: str) -> list[Path]:
 
 def participants(input_path: str, output: str, reactors: str | None = None,
                  fmt: str = "parquet") -> None:
-    """One row per unique person who commented or reacted: ID, username, name, counts."""
+    """One row per unique person who commented or reacted: ID, username, name, counts.
+
+    reactors: a path to the reactors file; None auto-discovers the sibling
+    <name>_reactors next to input_path; "" means "this run has no reactors file"
+    (skip the sibling lookup).
+    """
     df = read_table(input_path)
     _require_columns(df, ["Comments List"], input_path)
 
@@ -153,7 +163,13 @@ def participants(input_path: str, output: str, reactors: str | None = None,
          "Name": c.get("Comment Author Name") or "", "Comments": 1, "Reactions": 0}
         for _post, c in _comment_pairs(df)
     ]
-    for rf in ([Path(reactors)] if reactors else _sibling_reactors(input_path)):
+    if reactors:
+        reactor_files = [Path(reactors)]
+    elif reactors is None:
+        reactor_files = _sibling_reactors(input_path)
+    else:  # "" -> caller says there is no reactors file for this run
+        reactor_files = []
+    for rf in reactor_files:
         rdf = read_table(rf)
         _require_columns(rdf, ["Reactor ID", "Reactor Username"], str(rf))
         rows += [

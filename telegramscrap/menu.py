@@ -83,10 +83,12 @@ def _scrape_argv(p: Prompt) -> list[str]:
     _opt(argv, "--timeout", p.text("Timeout seconds (0 = no limit)", "21600"), "21600")
     _opt(argv, "--out-dir", p.text("Output directory", "output"), "output")
     argv += ["--format", p.choice("Format", ["parquet", "excel"], "parquet")]
-    if not p.yes_no("Fetch comments (commenter id + username)?", True):
+    if not p.yes_no("Fetch comments (commenter id + username + name)?", True):
         argv.append("--no-comments")
-    if p.yes_no("Collect reactors (id + username + emoji; slow)?", False):
-        argv.append("--collect-reactors")
+    if not p.yes_no("Collect reactors (id + username; slow, one API call per reacted message)?", True):
+        argv.append("--no-reactors")
+    if not p.yes_no("Also build the participants table (id + username + name)?", True):
+        argv.append("--no-participants")
     return argv
 
 
@@ -138,8 +140,8 @@ def _links_argv(p: Prompt) -> list[str]:
 
 
 def _comments_argv(p: Prompt) -> list[str]:
-    argv = ["comments", "--input", _ask_data_file(p, "Scraped posts file")]
-    argv += ["--output", p.text("Output path", required=True)]
+    argv = ["comments", "--input", _ask_data_file(p, "Scraped posts file (the *_posts file, not *_reactors)")]
+    argv += ["--output", p.text("Output path for the new file (e.g. output/Baza_comments)", required=True)]
     fmt = p.choice("Format", ["parquet", "excel"], "parquet")
     if fmt != "parquet":
         argv += ["--format", fmt]
@@ -147,8 +149,10 @@ def _comments_argv(p: Prompt) -> list[str]:
 
 
 def _participants_argv(p: Prompt) -> list[str]:
-    argv = ["participants", "--input", _ask_data_file(p, "Scraped posts file")]
-    argv += ["--output", p.text("Output path", required=True)]
+    argv = ["participants", "--input",
+            _ask_data_file(p, "Scraped posts file (the *_posts file, not *_reactors — "
+                              "the reactors file next to it is picked up automatically)")]
+    argv += ["--output", p.text("Output path for the new file (e.g. output/Baza_participants)", required=True)]
     fmt = p.choice("Format", ["parquet", "excel"], "parquet")
     if fmt != "parquet":
         argv += ["--format", fmt]
@@ -161,7 +165,7 @@ def _login_argv(p: Prompt) -> list[str]:
 
 # key -> (label, one-line help, argv builder)
 _ACTIONS = {
-    "1": ("scrape", "collect posts / comments / reactors from channels", _scrape_argv),
+    "1": ("scrape", "channels -> posts + participants + reactors in one run", _scrape_argv),
     "2": ("read", "preview a data file, optionally convert it", _read_argv),
     "3": ("combine", "merge .parquet files, drop duplicates", _combine_argv),
     "4": ("comments", "flatten Comments List into one row per comment", _comments_argv),

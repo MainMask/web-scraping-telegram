@@ -95,19 +95,23 @@ the ID to resolve. For an ID-only channel the `Group` column and file names use
 
 Useful flags: `--channels-file channels.txt` (comma- or newline-separated), `--keyword <term>`,
 `--max-messages <n>`, `--timeout <seconds>` (`0` = no limit), `--no-comments` (skip the
-per-post comment fetch), `--collect-reactors` (see below), `--session <name>`,
-`--format {parquet,excel}`.
+per-post comment fetch), `--no-reactors` (see below), `--no-participants` (skip the
+`<name>_participants` table), `--session <name>`, `--format {parquet,excel}`.
 
-`--collect-reactors` also writes a separate `<name>_reactors` file with one
+By default the run also writes a separate `<name>_reactors` file with one
 row per *(user, message, reaction)*: who (`id` + `username`) put which emoji, and on what.
-It is **opt-in and slow** — one extra API call per message that has reactions. Telegram
+It is **slow** — one extra API call per message that has reactions. Telegram
 refuses the reactors list for **broadcast-channel posts** (to prevent de-anonymisation), so
-those are skipped with a note; in practice this flag captures the reactions left on the
-**comments**, and therefore needs the comment fetch enabled (not `--no-comments`).
+those are skipped with a note; in practice this captures the reactions left on the
+**comments** — with `--no-comments` there is almost nothing left to collect for a channel.
+Pass `--no-reactors` to skip it.
 
-On a busy channel this is easily thousands of requests; Telegram may answer with
-`FloodWaitError` (logged and skipped) or, worst case, a temporary soft ban. Keep runs
-small with `--max-messages` / a narrow date range.
+On a busy channel this is easily thousands of requests. `FLOOD_WAIT` responses of up
+to 10 minutes are waited out and retried automatically (no data lost) — the wait is
+printed to the terminal (`… WARNING  Sleeping for Ns …`); a small pause between
+reaction-list calls keeps the burst rate down. A longer wait means a temporary soft
+ban — it is logged and that message skipped. Keep runs small with `--max-messages` /
+a narrow date range, or add `--no-reactors`.
 
 Output is **parquet** by default. Use `--format excel` only for small runs — Excel truncates
 any cell over 32,767 characters (the `Comments List` of a busy post easily exceeds that);
@@ -120,13 +124,19 @@ Dates may be written as `DD.MM.YYYY` (e.g. `15.10.2024`) or ISO `YYYY-MM-DD`. Bo
 
 Output files land in `--out-dir`, named after `--name`:
 
-- `<name>_posts.<ext>` — the full run: one row per post, comments in the `Comments List` column
-- `<name>_reactors.<ext>` — only with `--collect-reactors`; one row per *(user, message, reaction)*:
+- `<name>_posts.<ext>` — the full run: one row per post, comments in the `Comments List` column.
+  Normalised on the way out (like `combine`): duplicates dropped on `Group` + `Message ID`,
+  a `Comments` count column added, `Date` parsed to a real datetime, rows sorted newest-first.
+- `<name>_participants.<ext>` — unless `--no-participants`; one row per unique person who
+  commented or reacted: `ID, Username, Name, Comments, Reactions, Total`.
+  Skipped with a note when there is nothing to build.
+- `<name>_reactors.<ext>` — unless `--no-reactors`; one row per *(user, message, reaction)*:
   `Type, Target, Group, Message ID, Post ID, Url, Reactor ID, Reactor Username, Reactor Name, Reaction, Date`
 - `<name>_partial/` — checkpoints written during the run (after each channel, and every
   1,000 messages). Safe to delete once `<name>_posts` is written.
 
-Re-running with the same `--name` overwrites the previous `<name>_posts` / `<name>_reactors`.
+Re-running with the same `--name` overwrites the previous
+`<name>_posts` / `<name>_participants` / `<name>_reactors`.
 
 ### Analyse
 
@@ -147,7 +157,8 @@ explodes it into a flat table (one row per comment, with `Comment Author ID` /
 
 `telegramscrap participants` goes further: it merges the commenters with the
 `<name>_reactors` file it finds next to `--input` and writes one row per
-person — `ID, Username, Name, Comments, Reactions, Total`. `Username` / `Name` are
+person — `ID, Username, Name, Comments, Reactions, Total`. `scrape` runs this
+step for you (`<name>_participants`) unless you pass `--no-participants`. `Username` / `Name` are
 blank when Telegram has none for that account (only the numeric `ID` identifies them);
 `Name` is only populated for data scraped after this feature was added.
 
@@ -156,6 +167,8 @@ blank when Telegram has none for that account (only the numeric `ID` identifies 
 ## Output columns
 
 `Type, Group, Author ID, Content, Date, Message ID, Author, Views, Reactions, Shares, Media, Url, Comments List`
+
+plus a `Comments` count column added when the file is normalised on write.
 
 Each entry inside the `Comments List` JSON carries `Comment Author ID` **and**
 `Comment Author Username` (`""` if the commenter has none, `[channel]` / `[anonymous]`

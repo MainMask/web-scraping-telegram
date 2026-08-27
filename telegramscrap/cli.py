@@ -1,6 +1,7 @@
 """Command-line entry point: `telegramscrap <command>`."""
 
 import argparse
+import logging
 import re
 from pathlib import Path
 
@@ -48,7 +49,8 @@ def cmd_scrape(args) -> None:
         out_dir=Path(args.out_dir),
         session=args.session,
         with_comments=not args.no_comments,
-        with_reactors=args.collect_reactors,
+        with_reactors=not args.no_reactors,
+        with_participants=not args.no_participants,
     )
     run(load_credentials(), params)
 
@@ -151,11 +153,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--session", default="telegramscrap",
                    help="session name/path (default: ./telegramscrap.session)")
     s.add_argument("--no-comments", action="store_true", help="skip fetching per-message comments (much faster)")
-    s.add_argument("--collect-reactors", action="store_true",
-                   help="also fetch per-user reaction lists (id + username + emoji) into a separate "
-                        "<name>_reactors file. Slow: one API call per reacted message. Telegram "
-                        "refuses this for broadcast-channel posts (skipped), so it mainly captures "
-                        "reactions on the comments and needs the comment fetch enabled.")
+    s.add_argument("--no-participants", action="store_true",
+                   help="skip building the <name>_participants table (id + username + name of "
+                        "commenters/reactors)")
+    s.add_argument("--no-reactors", action="store_true",
+                   help="skip fetching per-user reaction lists (id + username + emoji) into a "
+                        "separate <name>_reactors file. Collected by default but slow: one API "
+                        "call per reacted message. Telegram refuses this for broadcast-channel "
+                        "posts (skipped), so it mainly captures reactions on the comments.")
     s.set_defaults(func=cmd_scrape)
 
     r = sub.add_parser("read", help="print the head of a data file and optionally convert it")
@@ -218,6 +223,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # so Telethon's "Sleeping for Ns on flood wait" warnings actually reach the terminal
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s  %(levelname)s  %(message)s",
+                        datefmt="%H:%M:%S")
     args = build_parser().parse_args(argv)
     if getattr(args, "func", None) is None:  # `telegramscrap` with no arguments
         cmd_menu(args)

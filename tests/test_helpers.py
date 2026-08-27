@@ -10,7 +10,7 @@ from telegramscrap.analysis import (
 )
 from telegramscrap.cli import build_parser
 from telegramscrap.datafiles import clean_xml_text, format_duration, read_table, save_table
-from telegramscrap.scrape import _channel_ref, channel_slug, parse_date
+from telegramscrap.scrape import _channel_ref, _progress_bar, channel_slug, parse_date
 
 
 def test_clean_xml_text_handles_none_and_control_chars():
@@ -21,6 +21,15 @@ def test_clean_xml_text_handles_none_and_control_chars():
 
 def test_format_duration():
     assert format_duration(90061) == "01:01:01:01"
+
+
+def test_progress_bar():
+    assert _progress_bar(0) == "░" * 20
+    assert _progress_bar(1) == "█" * 20
+    assert _progress_bar(0.5).count("█") == 10
+    assert _progress_bar(-1) == "░" * 20        # clamps below 0
+    assert _progress_bar(2) == "█" * 20         # clamps above 1
+    assert len(_progress_bar(0.37)) == 20
 
 
 @pytest.mark.parametrize("fmt", ["parquet", "xlsx", "csv"])
