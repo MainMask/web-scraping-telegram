@@ -142,13 +142,14 @@ def test_explode_comments_errors_when_empty(tmp_path):
 
 
 def test_participants_merges_commenters_and_reactors(tmp_path):
-    src = _posts_with_comments(tmp_path, "FINAL_x_with_00002.parquet")
+    src = _posts_with_comments(tmp_path, "x_posts.parquet")
     pd.DataFrame({
         "Reactor ID": [5, 5, 9, -1001490082514],
         "Reactor Username": ["", "", "ann", "[channel]"],
         "Reactor Name": ["Bob B", "Bob B", "Ann A", "Some Chan"],
         "Reaction": ["👍", "🔥", "👍", "❤"],
-    }).to_parquet(tmp_path / "FINAL_x_reactors_with_00004.parquet")
+    }).to_parquet(tmp_path / "x_reactors.parquet")
+    (tmp_path / "other_reactors.parquet").write_bytes(b"unrelated")  # must NOT be picked up
 
     out = tmp_path / "people.parquet"
     participants(str(src), str(out))

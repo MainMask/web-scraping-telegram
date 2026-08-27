@@ -132,8 +132,15 @@ def _first_nonempty(series) -> str:
 
 
 def _sibling_reactors(input_path: str) -> list[Path]:
-    d = Path(input_path).parent
-    return sorted(d.glob("*reactors*.parquet")) + sorted(d.glob("*reactors*.xlsx"))
+    """The <name>_reactors file next to a <name>_posts input (both extensions tried)."""
+    p = Path(input_path)
+    base = p.stem[:-len("_posts")] if p.stem.endswith("_posts") else p.stem
+    hits = []
+    for ext in (".parquet", ".xlsx"):
+        cand = p.with_name(f"{base}_reactors{ext}")
+        if cand.exists():
+            hits.append(cand)
+    return hits
 
 
 def participants(input_path: str, output: str, reactors: str | None = None,
