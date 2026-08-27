@@ -98,7 +98,7 @@ Useful flags: `--channels-file channels.txt` (comma- or newline-separated), `--k
 per-post comment fetch), `--collect-reactors` (see below), `--session <name>`,
 `--format {parquet,excel}`.
 
-`--collect-reactors` also writes a separate `FINAL_<name>_reactors_with_<n>` file with one
+`--collect-reactors` also writes a separate `<name>_reactors` file with one
 row per *(user, message, reaction)*: who (`id` + `username`) put which emoji, and on what.
 It is **opt-in and slow** — one extra API call per message that has reactions. Telegram
 refuses the reactors list for **broadcast-channel posts** (to prevent de-anonymisation), so
@@ -118,22 +118,22 @@ Comments are fetched only for posts that actually have a linked discussion threa
 Dates may be written as `DD.MM.YYYY` (e.g. `15.10.2024`) or ISO `YYYY-MM-DD`. Both
 `--date-min` and `--date-max` are **inclusive**; `--date-max` covers the whole day (UTC).
 
-Output files land in `--out-dir` (`<slug>` is the channel name without `@`, or
-`c<short_id>` for a numeric-ID channel):
+Output files land in `--out-dir`, named after `--name`:
 
-- `backup_<name>_until_<n>_<slug>_ID<id>.<ext>` — written every 1,000 messages
-- `complete_<slug>_in_<name>_until_<n>.<ext>` — after each channel finishes
-- `FINAL_<name>_with_<n>.<ext>` — the full run
-- `FINAL_<name>_reactors_with_<n>.<ext>` — only with `--collect-reactors`; one row per
-  *(user, message, reaction)*, columns:
+- `<name>_posts.<ext>` — the full run: one row per post, comments in the `Comments List` column
+- `<name>_reactors.<ext>` — only with `--collect-reactors`; one row per *(user, message, reaction)*:
   `Type, Target, Group, Message ID, Post ID, Url, Reactor ID, Reactor Username, Reactor Name, Reaction, Date`
+- `<name>_partial/` — checkpoints written during the run (after each channel, and every
+  1,000 messages). Safe to delete once `<name>_posts` is written.
+
+Re-running with the same `--name` overwrites the previous `<name>_posts` / `<name>_reactors`.
 
 ### Analyse
 
 ```bash
-telegramscrap combine      --input 'output/*.parquet' --output output/unified.parquet
+telegramscrap combine      --input 'output/*_posts.parquet' --output output/unified.parquet
 telegramscrap comments     --input output/unified.parquet --output output/comments.parquet
-telegramscrap participants  --input output/FINAL_Test_with_00500.parquet --output output/people.xlsx
+telegramscrap participants --input output/Test_posts.parquet --output output/people.xlsx
 telegramscrap summary  --input output/unified.parquet --output-base output/resume
 telegramscrap filter   --input output/unified.parquet --output output/kw --keywords "Trump,Biden,Kamala"
 telegramscrap sample   --input output/unified.parquet --output output/sample.xlsx --sample-size 10000
@@ -146,7 +146,7 @@ explodes it into a flat table (one row per comment, with `Comment Author ID` /
 `Comment Author Username` / `Comment Author Name`), `--format excel` for a spreadsheet.
 
 `telegramscrap participants` goes further: it merges the commenters with the
-`FINAL_<name>_reactors_*` file it finds next to `--input` and writes one row per
+`<name>_reactors` file it finds next to `--input` and writes one row per
 person — `ID, Username, Name, Comments, Reactions, Total`. `Username` / `Name` are
 blank when Telegram has none for that account (only the numeric `ID` identifies them);
 `Name` is only populated for data scraped after this feature was added.

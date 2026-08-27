@@ -225,6 +225,7 @@ async def _collect_comments(
 
 async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFrame, pd.DataFrame]:
     params.out_dir.mkdir(parents=True, exist_ok=True)
+    partial_dir = params.out_dir / f"{params.name}_partial"  # checkpoints; created on first write
 
     data: list[dict] = []
     reactors: list[dict] = []
@@ -294,18 +295,17 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
                     )
 
                     if t_index % 1000 == 0:
-                        backup = params.out_dir / (
-                            f"backup_{params.name}_until_{t_index:05}_"
-                            f"{ref.slug}_ID{message.id:07}"
-                        )
+                        partial_dir.mkdir(exist_ok=True)
+                        backup = partial_dir / f"backup_{t_index:05}"
                         save_table(pd.DataFrame(data), backup, params.fmt)
-                        print(f"  -> backup written: {backup.name}")
+                        print(f"  -> checkpoint: {backup.name}")
 
                     if t_index >= params.max_messages or time_is_up():
                         break
 
                 print(f"##### {channel}: done, {c_index:05} posts #####")
-                partial = params.out_dir / f"complete_{ref.slug}_in_{params.name}_until_{t_index:05}"
+                partial_dir.mkdir(exist_ok=True)
+                partial = partial_dir / f"{ref.slug}_until_{t_index:05}"
                 save_table(pd.DataFrame(data), partial, params.fmt)
             except Exception as exc:
                 print(f"{channel} error: {exc}")
@@ -325,11 +325,9 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
 
 def run(creds: Credentials, params: ScrapeParams) -> Path:
     df, reactors = asyncio.run(_scrape(creds, params))
-    final = params.out_dir / f"FINAL_{params.name}_with_{len(df):05}"
-    path = save_table(df, final, params.fmt)
-    print(f"Final file: {path}")
+    path = save_table(df, params.out_dir / f"{params.name}_posts", params.fmt)
+    print(f"Posts:    {path}  ({len(df)} rows)")
     if params.with_reactors and not reactors.empty:
-        r_final = params.out_dir / f"FINAL_{params.name}_reactors_with_{len(reactors):05}"
-        r_path = save_table(reactors, r_final, params.fmt)
-        print(f"Reactors file: {r_path}")
+        r_path = save_table(reactors, params.out_dir / f"{params.name}_reactors", params.fmt)
+        print(f"Reactors: {r_path}  ({len(reactors)} rows)")
     return path

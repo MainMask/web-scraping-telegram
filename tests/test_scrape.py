@@ -122,7 +122,7 @@ def _params(tmp_path, **kw):
 
 def test_scrape_end_to_end(fake_client, tmp_path):
     path = scrape.run(Credentials(1, "hash"), _params(tmp_path))
-    assert path.name == "FINAL_unit.test_with_00002.parquet"
+    assert path.name == "unit.test_posts.parquet"
 
     df = pd.read_parquet(path)
     assert list(df["Message ID"]) == [30, 20]           # newer skipped, older breaks
@@ -147,13 +147,13 @@ def test_scrape_numeric_channel_id(fake_client, tmp_path):
     df = pd.read_parquet(path)
     assert set(df["Group"]) == {"@c1629147115"}
     assert df.iloc[0]["Url"] == "https://t.me/c/1629147115/30"
-    assert list(tmp_path.glob("complete_c1629147115_in_*"))
+    assert (tmp_path / "unit.test_partial" / "c1629147115_until_00002.parquet").exists()
 
 
 def test_scrape_collect_reactors(fake_client, tmp_path):
     scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True))
 
-    files = list(tmp_path.glob("FINAL_unit.test_reactors_with_*.parquet"))
+    files = list(tmp_path.glob("unit.test_reactors.parquet"))
     assert len(files) == 1
     r = pd.read_parquet(files[0])
 
