@@ -212,8 +212,8 @@ def run_menu(prompt: Prompt | None = None, dispatch=None) -> None:
             continue
         try:
             dispatch(argv)
-        except SystemExit as exc:  # argparse errors / raise SystemExit in analysis
-            if exc.code not in (0, None):
-                print(f"  ! {exc}")
+        except SystemExit as exc:  # our own raise SystemExit("msg"); argparse prints its own
+            if isinstance(exc.code, str):
+                print(f"  ! {exc.code}")
         except Exception as exc:  # keep the menu alive on any command failure
             print(f"  ! {type(exc).__name__}: {exc}")

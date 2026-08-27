@@ -141,12 +141,20 @@ def test_menu_runs_selected_command_then_quits():
                       "--date-max", "2025-01-02", "--name", "t", "--format", "parquet"]]
 
 
-def test_menu_survives_command_error():
+def test_menu_survives_command_error(capsys):
     def boom(argv):
         raise SystemExit("boom")
 
-    answers = ["2", "some/file.parquet", "", "", "", "0"]
-    run_menu(_prompt(answers), dispatch=boom)  # must not raise
+    run_menu(_prompt(["2", "some/file.parquet", "", "", "", "0"]), dispatch=boom)  # must not raise
+    assert "  ! boom" in capsys.readouterr().out
+
+
+def test_menu_hides_numeric_exit_code(capsys):
+    def argparse_style(argv):
+        raise SystemExit(2)  # argparse already printed its own message
+
+    run_menu(_prompt(["2", "some/file.parquet", "", "", "", "0"]), dispatch=argparse_style)
+    assert "! 2" not in capsys.readouterr().out
 
 
 def test_menu_quit_immediately():
