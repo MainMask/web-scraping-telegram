@@ -1,0 +1,6 @@
+telethon
+pandas
+numpy
+tqdm
+pyarrow
+openpyxl
