@@ -83,6 +83,12 @@ def cmd_combine(args) -> None:
     combine(args.input, args.output, [c.strip() for c in args.dedup_cols.split(",")])
 
 
+def cmd_comments(args) -> None:
+    from telegramscrap.analysis import explode_comments
+
+    explode_comments(args.input, args.output, args.format)
+
+
 def cmd_summary(args) -> None:
     from telegramscrap.analysis import summary
 
@@ -157,6 +163,12 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--output", required=True)
     c.add_argument("--dedup-cols", default="Group,Message ID")
     c.set_defaults(func=cmd_combine)
+
+    cm = sub.add_parser("comments", help="flatten Comments List into a table with one row per comment")
+    cm.add_argument("--input", required=True, help="a scraped parquet/xlsx (needs Comments List, Group, Message ID)")
+    cm.add_argument("--output", required=True)
+    cm.add_argument("--format", choices=["parquet", "excel"], default="parquet")
+    cm.set_defaults(func=cmd_comments)
 
     m = sub.add_parser("summary", help="per-group monthly summary tables (contents/comments/total)")
     m.add_argument("--input", required=True)

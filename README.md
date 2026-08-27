@@ -59,6 +59,7 @@ telegramscrap <command> [options]        # or:  python -m telegramscrap <command
 | `scrape`  | scrape channels/groups into `.parquet` or `.xlsx` |
 | `read`    | print the head of a data file, optionally convert it |
 | `combine` | merge many `.parquet` files, drop duplicates, recount comments |
+| `comments`| flatten `Comments List` into a table with one row per comment |
 | `summary` | per-group monthly tables (contents / comments / total) |
 | `sample`  | proportional per-category sample to `.xlsx` |
 | `filter`  | keep rows matching keywords, add one 0/1 column per keyword |
@@ -129,15 +130,18 @@ Output files land in `--out-dir` (`<slug>` is the channel name without `@`, or
 ### Analyse
 
 ```bash
-telegramscrap combine --input 'output/*.parquet' --output output/unified.parquet
-telegramscrap summary --input output/unified.parquet --output-base output/resume
-telegramscrap filter  --input output/unified.parquet --output output/kw --keywords "Trump,Biden,Kamala"
-telegramscrap sample  --input output/unified.parquet --output output/sample.xlsx --sample-size 10000
-telegramscrap links   --input output/unified.parquet --output output/links.xlsx
-telegramscrap read    output/unified.parquet --head 20 --to xlsx
+telegramscrap combine  --input 'output/*.parquet' --output output/unified.parquet
+telegramscrap comments --input output/unified.parquet --output output/comments.parquet
+telegramscrap summary  --input output/unified.parquet --output-base output/resume
+telegramscrap filter   --input output/unified.parquet --output output/kw --keywords "Trump,Biden,Kamala"
+telegramscrap sample   --input output/unified.parquet --output output/sample.xlsx --sample-size 10000
+telegramscrap links    --input output/unified.parquet --output output/links.xlsx
+telegramscrap read     output/unified.parquet --head 20 --to xlsx
 ```
 
-The `Comments List` column holds comments as a JSON string — decode it when exporting.
+The `Comments List` column holds comments as a JSON string — `telegramscrap comments`
+explodes it into a flat table (one row per comment, with `Comment Author ID` /
+`Comment Author Username`), `--format excel` for a spreadsheet.
 
 ---
 
@@ -177,7 +181,7 @@ telegramscrap/
   menu.py        interactive input()-based wizard over the CLI flags
   config.py      load TG_* credentials from .env
   scrape.py      async scraper (asyncio.run)
-  analysis.py    combine / summary / sample / filter / links
+  analysis.py    combine / comments / summary / sample / filter / links
   datafiles.py   read/write parquet·xlsx·csv, text cleaning
 tests/           offline tests for the helpers
 ```

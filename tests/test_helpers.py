@@ -1,9 +1,11 @@
 """Offline tests for the pure helpers (no Telegram network, no credentials)."""
 
+import json
+
 import pandas as pd
 import pytest
 
-from telegramscrap.analysis import _TME_BASE_RE, _TME_RE, _count_comments, combine
+from telegramscrap.analysis import _TME_BASE_RE, _TME_RE, _count_comments, combine, explode_comments
 from telegramscrap.cli import build_parser
 from telegramscrap.datafiles import clean_xml_text, format_duration, read_table, save_table
 from telegramscrap.scrape import _channel_ref, channel_slug, parse_date
@@ -92,6 +94,46 @@ def test_combine_errors_on_empty_inputs(tmp_path):
     pd.DataFrame().to_parquet(tmp_path / "empty.parquet")
     with pytest.raises(SystemExit):
         combine(str(tmp_path / "*.parquet"), str(tmp_path / "out.parquet"), ["Group", "Message ID"])
+
+
+def _posts_with_comments(tmp_path):
+    comment = {
+        "Type": "comment", "Comment Author ID": 5, "Comment Author Username": "bob",
+        "Comment Content": "hi", "Comment Date": "2025-01-01 00:00:00",
+        "Comment Message ID": 100, "Comment Author": None, "Comment Views": None,
+        "Comment Reactions": "", "Comment Shares": 0, "Comment Media": False,
+        "Comment Url": "https://t.me/c/1/10?comment=100",
+    }
+    df = pd.DataFrame({
+        "Group": ["@c1", "@c1"],
+        "Message ID": [10, 11],
+        "Url": ["https://t.me/c/1/10", "https://t.me/c/1/11"],
+        "Comments List": [json.dumps([comment]), "[]"],
+    })
+    src = tmp_path / "posts.parquet"
+    df.to_parquet(src)
+    return src
+
+
+def test_explode_comments(tmp_path):
+    out = tmp_path / "comments.parquet"
+    explode_comments(str(_posts_with_comments(tmp_path)), str(out))
+    r = read_table(out)
+    assert len(r) == 1
+    assert list(r.columns[:5]) == [
+        "Group", "Post ID", "Post Url", "Comment Author ID", "Comment Author Username"
+    ]
+    assert r.iloc[0]["Comment Author Username"] == "bob"
+    assert r.iloc[0]["Post ID"] == 10
+    assert r.iloc[0]["Post Url"] == "https://t.me/c/1/10"
+
+
+def test_explode_comments_errors_when_empty(tmp_path):
+    pd.DataFrame({"Group": ["@c1"], "Message ID": [10], "Comments List": ["[]"]}).to_parquet(
+        tmp_path / "posts.parquet"
+    )
+    with pytest.raises(SystemExit):
+        explode_comments(str(tmp_path / "posts.parquet"), str(tmp_path / "out.parquet"))
 
 
 def test_combine_custom_dedup_cols_without_message_id(tmp_path):

@@ -71,6 +71,47 @@ def combine(inputs: str, output: str, dedup_cols: list[str]) -> None:
     print(f"Saved: {output}")
 
 
+def explode_comments(input_path: str, output: str, fmt: str = "parquet") -> None:
+    """Flatten the Comments List JSON into a flat table: one row per comment."""
+    df = read_table(input_path)
+    _require_columns(df, ["Comments List", "Group", "Message ID"], input_path)
+    rows = []
+    for post in tqdm(df.to_dict(orient="records"), desc="Exploding comments"):
+        raw = post.get("Comments List")
+        if isinstance(raw, str):
+            items = json.loads(raw) if raw.strip() else []
+        elif isinstance(raw, list):
+            items = raw
+        else:
+            items = []
+        for c in items:
+            if c.get("Type") != "comment":
+                continue
+            rows.append({
+                "Group": post["Group"],
+                "Post ID": post["Message ID"],
+                "Post Url": post.get("Url", ""),
+                "Comment Author ID": c.get("Comment Author ID"),
+                "Comment Author Username": c.get("Comment Author Username", ""),
+                "Comment Content": c.get("Comment Content", ""),
+                "Comment Date": c.get("Comment Date", ""),
+                "Comment Message ID": c.get("Comment Message ID"),
+                "Comment Author": c.get("Comment Author"),
+                "Comment Views": c.get("Comment Views"),
+                "Comment Reactions": c.get("Comment Reactions", ""),
+                "Comment Shares": c.get("Comment Shares"),
+                "Comment Media": c.get("Comment Media"),
+                "Comment Url": c.get("Comment Url", ""),
+            })
+    if not rows:
+        raise SystemExit(f"{input_path}: no comments in 'Comments List'.")
+    out = pd.DataFrame(rows)
+    for col in ("Comment Author ID", "Comment Message ID", "Comment Views", "Comment Shares"):
+        out[col] = pd.to_numeric(out[col], errors="coerce").astype("Int64")  # keep ints, allow <NA>
+    save_table(out, output, fmt)
+    print(f"Saved: {output} ({len(rows)} comments)")
+
+
 def summary(input_path: str, output_base: str, date_col: str, group_col: str, comments_col: str) -> None:
     """Per-group monthly counts of contents, comments and their total."""
     df = read_table(input_path)

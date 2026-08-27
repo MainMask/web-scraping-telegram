@@ -108,6 +108,18 @@ def test_read_argv_typed_path_when_files_listed(tmp_path, monkeypatch):
     assert argv[1] == "some/other.parquet"
 
 
+def test_comments_argv(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "FINAL_a.parquet").write_bytes(b"x")
+    from telegramscrap.menu import _comments_argv
+
+    argv = _comments_argv(_prompt(["1", "output/a_comments.parquet", ""]))
+    assert argv == ["comments", "--input", "output/FINAL_a.parquet",
+                    "--output", "output/a_comments.parquet"]
+    _valid(argv)
+
+
 def test_menu_runs_selected_command_then_quits():
     calls = []
     answers = ["1", "@a", "2025-01-01", "2025-01-02", "t",
