@@ -69,7 +69,8 @@ def test_scrape_argv_channels_file(tmp_path):
     _valid(argv)
 
 
-def test_read_argv_with_conversion():
+def test_read_argv_with_conversion(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no data files -> plain text prompt
     from telegramscrap.menu import _read_argv
 
     argv = _read_argv(_prompt(["output/f.parquet", "20", "2"]))  # "2" -> excel
@@ -77,12 +78,34 @@ def test_read_argv_with_conversion():
     _valid(argv)
 
 
-def test_read_argv_defaults():
+def test_read_argv_defaults(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     from telegramscrap.menu import _read_argv
 
     argv = _read_argv(_prompt(["output/f.parquet", "", ""]))
     assert argv == ["read", "output/f.parquet"]
     _valid(argv)
+
+
+def test_read_argv_picks_file_by_number(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "FINAL_a.parquet").write_bytes(b"x")
+    from telegramscrap.menu import _read_argv
+
+    argv = _read_argv(_prompt(["1", "", ""]))
+    assert argv[1] == "output/FINAL_a.parquet"
+    assert argv[0] == "read"
+
+
+def test_read_argv_typed_path_when_files_listed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "FINAL_a.parquet").write_bytes(b"x")
+    from telegramscrap.menu import _read_argv
+
+    argv = _read_argv(_prompt(["some/other.parquet", "", ""]))
+    assert argv[1] == "some/other.parquet"
 
 
 def test_menu_runs_selected_command_then_quits():

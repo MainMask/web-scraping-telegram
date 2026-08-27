@@ -42,6 +42,34 @@ def _opt(argv: list[str], flag: str, value: str, default: str) -> None:
         argv += [flag, value]
 
 
+_DATA_EXT = (".parquet", ".xlsx", ".csv")
+
+
+def _data_files() -> list[Path]:
+    """Data files in ./output and the current directory, newest first (max 40)."""
+    found: dict = {}
+    for d in (Path("output"), Path(".")):
+        if d.is_dir():
+            for f in d.iterdir():
+                if f.is_file() and f.suffix.lower() in _DATA_EXT:
+                    found[f.resolve()] = f
+    return sorted(found.values(), key=lambda f: f.stat().st_mtime, reverse=True)[:40]
+
+
+def _ask_data_file(p: Prompt, msg: str) -> str:
+    """Prompt for an input file, offering a numbered list of found data files."""
+    files = _data_files()
+    if not files:
+        return p.text(msg, required=True)
+    print(f"\n{msg}:")
+    for i, f in enumerate(files, 1):
+        print(f"  {i:>2}) {f}")
+    raw = p.text("Pick a number or type a path", required=True)
+    if raw.isdigit() and 1 <= int(raw) <= len(files):
+        return str(files[int(raw) - 1])
+    return raw
+
+
 def _scrape_argv(p: Prompt) -> list[str]:
     argv = ["scrape"]
     channels = p.text("Channels: @name / numeric id (-100...), comma-separated, or path to a .txt file",
@@ -63,7 +91,7 @@ def _scrape_argv(p: Prompt) -> list[str]:
 
 
 def _read_argv(p: Prompt) -> list[str]:
-    argv = ["read", p.text("Data file to preview", required=True)]
+    argv = ["read", _ask_data_file(p, "Data file to preview")]
     _opt(argv, "--head", p.text("Rows to show", "10"), "10")
     convert = p.choice("Also convert to", ["(none)", "excel", "parquet", "csv"], "(none)")
     if convert != "(none)":
@@ -81,14 +109,14 @@ def _combine_argv(p: Prompt) -> list[str]:
 
 def _summary_argv(p: Prompt) -> list[str]:
     argv = ["summary"]
-    argv += ["--input", p.text("Input data file", required=True)]
+    argv += ["--input", _ask_data_file(p, "Input data file")]
     argv += ["--output-base", p.text("Output path prefix (_contents.xlsx etc. appended)", required=True)]
     return argv
 
 
 def _sample_argv(p: Prompt) -> list[str]:
     argv = ["sample"]
-    argv += ["--input", p.text("Input data file", required=True)]
+    argv += ["--input", _ask_data_file(p, "Input data file")]
     argv += ["--output", p.text("Output .xlsx path", required=True)]
     _opt(argv, "--sample-size", p.text("Sample size", "10000"), "10000")
     return argv
@@ -96,7 +124,7 @@ def _sample_argv(p: Prompt) -> list[str]:
 
 def _filter_argv(p: Prompt) -> list[str]:
     argv = ["filter"]
-    argv += ["--input", p.text("Input data file", required=True)]
+    argv += ["--input", _ask_data_file(p, "Input data file")]
     argv += ["--output", p.text("Output base name (_unique.xlsx / _part_N.xlsx appended)", required=True)]
     argv += ["--keywords", p.text("Keywords (comma-separated)", required=True)]
     return argv
@@ -104,7 +132,7 @@ def _filter_argv(p: Prompt) -> list[str]:
 
 def _links_argv(p: Prompt) -> list[str]:
     argv = ["links"]
-    argv += ["--input", p.text("Input data file", required=True)]
+    argv += ["--input", _ask_data_file(p, "Input data file")]
     argv += ["--output", p.text("Output .xlsx path", required=True)]
     return argv
 
