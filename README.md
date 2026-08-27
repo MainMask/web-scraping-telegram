@@ -94,7 +94,7 @@ the ID to resolve. For an ID-only channel the `Group` column and file names use
 `@c<short_id>` and links are `https://t.me/c/<short_id>/…`.
 
 Useful flags: `--channels-file channels.txt` (comma- or newline-separated), `--keyword <term>`,
-`--max-messages <n>`, `--timeout <seconds>` (`0` = no limit), `--no-comments` (skip the
+`--max-messages <n>`, `--timeout <seconds>` (stop after N seconds; `0`, the default, = no limit), `--no-comments` (skip the
 per-post comment fetch), `--no-reactors` (see below), `--no-participants` (skip the
 `<name>_participants` table), `--session <name>`, `--format {parquet,excel}`.
 

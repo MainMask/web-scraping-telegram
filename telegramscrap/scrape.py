@@ -40,7 +40,7 @@ class ScrapeParams:
     name: str
     keyword: str = ""
     max_messages: int = 1_000_000
-    timeout: int = 21_600  # seconds; 0 disables the limit
+    timeout: int = 0  # stop after this many seconds; 0 disables the limit
     fmt: str = "parquet"
     out_dir: Path = Path("output")
     session: str = "telegramscrap"

@@ -146,7 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--name", required=True, help="base name for output files")
     s.add_argument("--keyword", default="", help="only messages containing this term")
     s.add_argument("--max-messages", type=_positive_int, default=1_000_000)
-    s.add_argument("--timeout", type=_non_negative_int, default=21_600, help="seconds; 0 = no limit")
+    s.add_argument("--timeout", type=_non_negative_int, default=0,
+                   help="stop after this many seconds; 0 (the default) = no time limit")
     s.add_argument("--format", choices=["excel", "parquet"], default="parquet",
                    help="parquet (default, lossless) or excel (capped at 32k chars/cell)")
     s.add_argument("--out-dir", default="output")

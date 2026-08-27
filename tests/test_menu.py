@@ -41,10 +41,10 @@ def test_scrape_argv_non_default_options():
     from telegramscrap.menu import _scrape_argv
 
     argv = _scrape_argv(_prompt(["@a", "2025-01-01", "2025-01-02", "t",
-                                 "trump", "50", "0", "data", "excel", "", "", ""]))
+                                 "trump", "50", "3600", "data", "excel", "", "", ""]))
     assert argv[argv.index("--keyword") + 1] == "trump"
     assert argv[argv.index("--max-messages") + 1] == "50"
-    assert argv[argv.index("--timeout") + 1] == "0"
+    assert argv[argv.index("--timeout") + 1] == "3600"
     assert argv[argv.index("--out-dir") + 1] == "data"
     assert argv[argv.index("--format") + 1] == "excel"
     _valid(argv)

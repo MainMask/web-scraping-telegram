@@ -80,7 +80,7 @@ def _scrape_argv(p: Prompt) -> list[str]:
     argv += ["--name", p.text("Output file base name", required=True)]
     _opt(argv, "--keyword", p.text("Keyword filter", ""), "")
     _opt(argv, "--max-messages", p.text("Max messages", "1000000"), "1000000")
-    _opt(argv, "--timeout", p.text("Timeout seconds (0 = no limit)", "21600"), "21600")
+    _opt(argv, "--timeout", p.text("Timeout seconds (0 = no limit)", "0"), "0")
     _opt(argv, "--out-dir", p.text("Output directory", "output"), "output")
     argv += ["--format", p.choice("Format", ["parquet", "excel"], "parquet")]
     if not p.yes_no("Fetch comments (commenter id + username + name)?", True):
