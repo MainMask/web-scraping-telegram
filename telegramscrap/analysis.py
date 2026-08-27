@@ -132,15 +132,14 @@ def _first_nonempty(series) -> str:
 
 
 def _sibling_reactors(input_path: str) -> list[Path]:
-    """The <name>_reactors file next to a <name>_posts input (both extensions tried)."""
+    """The <name>_reactors file next to a <name>_posts input, if it exists."""
     p = Path(input_path)
     base = p.stem[:-len("_posts")] if p.stem.endswith("_posts") else p.stem
-    hits = []
     for ext in (".parquet", ".xlsx"):
         cand = p.with_name(f"{base}_reactors{ext}")
         if cand.exists():
-            hits.append(cand)
-    return hits
+            return [cand]
+    return []
 
 
 def participants(input_path: str, output: str, reactors: str | None = None,
