@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telegramscrap"
-version = "2.0.0"
+dynamic = ["version"]
 description = "Terminal tool for scraping and analysing Telegram channels, groups and chats"
 requires-python = ">=3.11"
 dependencies = [
-    "telethon",
+    "telethon<2",
     "python-dotenv",
     "pandas",
     "numpy",
@@ -25,3 +25,6 @@ telegramscrap = "telegramscrap.cli:main"
 
 [tool.setuptools]
 packages = ["telegramscrap"]
+
+[tool.setuptools.dynamic]
+version = {attr = "telegramscrap.__version__"}

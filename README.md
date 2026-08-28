@@ -190,9 +190,10 @@ blank when Telegram has none for that account (only the numeric `ID` identifies 
 
 plus a `Comments` count column added when the file is normalised on write.
 
-Each entry inside the `Comments List` JSON carries `Comment Author ID` **and**
-`Comment Author Username` (`""` if the commenter has none, `[channel]` / `[anonymous]`
-when the reply was sent by a channel or anonymously).
+Each entry inside the `Comments List` JSON carries `Comment Author ID`,
+`Comment Author Username` **and** `Comment Author Name` (`""` if the commenter
+has none, `[channel]` / `[anonymous]` when the reply was sent by a channel or
+anonymously).
 
 ## Notes
 

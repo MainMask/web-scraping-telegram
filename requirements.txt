@@ -1,7 +1,1 @@
-telethon
-python-dotenv
-pandas
-numpy
-tqdm
-pyarrow
-openpyxl
+-e .
