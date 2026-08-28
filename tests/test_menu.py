@@ -20,7 +20,7 @@ def test_scrape_argv_minimal():
     from telegramscrap.menu import _scrape_argv
 
     argv = _scrape_argv(_prompt(["@durov", "2025-08-01", "2025-08-07", "test",
-                                 "", "", "", "", "", "", "", ""]))
+                                 "", "", "", "", "", "", "", "", ""]))
     assert argv == ["scrape", "--channels", "@durov", "--date-min", "2025-08-01",
                     "--date-max", "2025-08-07", "--name", "test", "--format", "parquet"]
     _valid(argv)
@@ -30,7 +30,7 @@ def test_scrape_argv_extras_disabled():
     from telegramscrap.menu import _scrape_argv
 
     argv = _scrape_argv(_prompt(["@a", "2025-01-01", "2025-01-02", "t",
-                                 "", "", "", "", "", "n", "n", "n"]))
+                                 "", "", "", "", "", "n", "n", "n", ""]))
     assert "--no-comments" in argv
     assert "--no-reactors" in argv
     assert "--no-participants" in argv
@@ -41,7 +41,7 @@ def test_scrape_argv_non_default_options():
     from telegramscrap.menu import _scrape_argv
 
     argv = _scrape_argv(_prompt(["@a", "2025-01-01", "2025-01-02", "t",
-                                 "trump", "50", "3600", "data", "excel", "", "", ""]))
+                                 "trump", "50", "3600", "data", "excel", "", "", "", ""]))
     assert argv[argv.index("--keyword") + 1] == "trump"
     assert argv[argv.index("--max-messages") + 1] == "50"
     assert argv[argv.index("--timeout") + 1] == "3600"
@@ -54,7 +54,7 @@ def test_scrape_argv_numeric_id():
     from telegramscrap.menu import _scrape_argv
 
     argv = _scrape_argv(_prompt(["-1001629147115", "2025-01-01", "2025-01-02", "t",
-                                 "", "", "", "", "", "", "", ""]))
+                                 "", "", "", "", "", "", "", "", ""]))
     assert argv[:3] == ["scrape", "--channels", "-1001629147115"]
     _valid(argv)  # argparse must accept the negative-number value
 
@@ -65,7 +65,7 @@ def test_scrape_argv_channels_file(tmp_path):
     f = tmp_path / "chans.txt"
     f.write_text("@a\n@b\n", encoding="utf-8")
     argv = _scrape_argv(_prompt([str(f), "2025-01-01", "2025-01-02", "t",
-                                 "", "", "", "", "", "", "", ""]))
+                                 "", "", "", "", "", "", "", "", ""]))
     assert argv[:3] == ["scrape", "--channels-file", str(f)]
     _valid(argv)
 
@@ -136,7 +136,7 @@ def test_participants_argv(tmp_path, monkeypatch):
 def test_menu_runs_selected_command_then_quits():
     calls = []
     answers = ["1", "@a", "2025-01-01", "2025-01-02", "t",
-               "", "", "", "", "", "", "", "", "", "0"]
+               "", "", "", "", "", "", "", "", "", "", "0"]
     run_menu(_prompt(answers), dispatch=calls.append)
     assert calls == [["scrape", "--channels", "@a", "--date-min", "2025-01-01",
                       "--date-max", "2025-01-02", "--name", "t", "--format", "parquet"]]
@@ -181,3 +181,10 @@ def test_cli_opens_menu(monkeypatch, argv):
 def test_cli_scrape_still_requires_flags():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["scrape"])
+
+
+def test_cli_scrape_resume_flag():
+    base = ["scrape", "--channels", "@a", "--date-min", "2025-01-01",
+            "--date-max", "2025-01-02", "--name", "t"]
+    assert build_parser().parse_args(base).resume is False
+    assert build_parser().parse_args(base + ["--resume"]).resume is True

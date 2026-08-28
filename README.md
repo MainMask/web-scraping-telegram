@@ -96,7 +96,8 @@ the ID to resolve. For an ID-only channel the `Group` column and file names use
 Useful flags: `--channels-file channels.txt` (comma- or newline-separated), `--keyword <term>`,
 `--max-messages <n>`, `--timeout <seconds>` (stop after N seconds; `0`, the default, = no limit), `--no-comments` (skip the
 per-post comment fetch), `--no-reactors` (see below), `--no-participants` (skip the
-`<name>_participants` table), `--session <name>`, `--format {parquet,excel}`.
+`<name>_participants` table), `--session <name>`, `--format {parquet,excel}`,
+`--resume` (see *Interruptions* below).
 
 By default the run also writes a separate `<name>_reactors` file with one
 row per *(user, message, reaction)*: who (`id` + `username`) put which emoji, and on what.
@@ -132,11 +133,30 @@ Output files land in `--out-dir`, named after `--name`:
   Skipped with a note when there is nothing to build.
 - `<name>_reactors.<ext>` — unless `--no-reactors`; one row per *(user, message, reaction)*:
   `Type, Target, Group, Message ID, Post ID, Url, Reactor ID, Reactor Username, Reactor Name, Reaction, Date`
-- `<name>_partial/` — checkpoints written during the run (after each channel, and every
-  1,000 messages). Safe to delete once `<name>_posts` is written.
+- `<name>_partial/` — `<slug>_until_NNNNN` snapshots written after each channel
+  (post-shaped, so `combine --input <name>_partial` merges just these). The resume
+  machinery lives in `<name>_partial/checkpoint/` — an overwriting
+  `posts.parquet` / `reactors.parquet` / `resume.json` trio (always parquet,
+  whatever `--format` is), rewritten every 1,000 messages and on every reconnect.
+  Safe to delete once `<name>_posts` is written (`resume.json` is removed
+  automatically on a clean finish).
 
 Re-running with the same `--name` overwrites the previous
 `<name>_posts` / `<name>_participants` / `<name>_reactors`.
+
+### Interruptions
+
+A dropped connection is waited out and retried for hours before the run gives up
+(`FLOOD_WAIT` soft bans are handled the same way, see above), and if `iter_messages`
+still fails the current channel is restarted from the last checkpointed message —
+so a passing outage costs nothing.
+
+If the run does die (a very long outage, a crash, `Ctrl-C`) it prints the ready-to-paste
+command that resumes it — the same arguments plus `--resume` — which reloads
+`<name>_partial/` and continues from the last checkpoint. `Ctrl-C` writes a fresh
+checkpoint on the way out. `--resume` refuses to run if the channels / keyword / dates
+differ from the interrupted job. (After a hard power-off, nothing is printed — add
+`--resume` to your original command by hand.)
 
 ### Analyse
 

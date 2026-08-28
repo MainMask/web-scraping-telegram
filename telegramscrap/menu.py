@@ -89,6 +89,8 @@ def _scrape_argv(p: Prompt) -> list[str]:
         argv.append("--no-reactors")
     if not p.yes_no("Also build the participants table (id + username + name)?", True):
         argv.append("--no-participants")
+    if p.yes_no("Resume an interrupted run with this name?", False):
+        argv.append("--resume")
     return argv
 
 

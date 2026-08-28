@@ -51,6 +51,8 @@ def cmd_scrape(args) -> None:
         with_comments=not args.no_comments,
         with_reactors=not args.no_reactors,
         with_participants=not args.no_participants,
+        resume=args.resume,
+        channels_file=args.channels_file or "",
     )
     run(load_credentials(), params)
 
@@ -153,6 +155,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--out-dir", default="output")
     s.add_argument("--session", default="telegramscrap",
                    help="session name/path (default: ./telegramscrap.session)")
+    s.add_argument("--resume", action="store_true",
+                   help="continue an interrupted run from output/<name>_partial/checkpoint/ "
+                        "(re-run the same command plus this flag)")
     s.add_argument("--no-comments", action="store_true", help="skip fetching per-message comments (much faster)")
     s.add_argument("--no-participants", action="store_true",
                    help="skip building the <name>_participants table (id + username + name of "
