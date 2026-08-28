@@ -1,0 +1,16 @@
+.venv/
+.git/
+.gitignore
+output/
+data/
+*.session
+*.session-journal
+.env
+.env.example
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+tests/
+README.md
+CLAUDE.md

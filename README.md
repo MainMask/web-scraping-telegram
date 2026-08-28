@@ -24,6 +24,36 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .                   # or: pip install -r requirements.txt
 ```
 
+## Docker
+
+Deploy on a server without a local Python setup. The Telethon session and every scraped
+file live in `./data/` on the host.
+
+```bash
+cp .env.example .env        # set TG_API_ID, TG_API_HASH
+docker compose build
+
+# authorise once (asks for the Telegram code) — session saved to ./data/
+docker compose run --rm telegramscrap login
+
+# scrape (writes to ./data/output/)
+docker compose run --rm telegramscrap scrape \
+  --channels '@channel' --date-min 01.01.2024 --date-max 31.01.2024 --name Test
+
+# interactive menu
+docker compose run --rm telegramscrap menu
+
+# analysis commands work the same (paths are relative to /data)
+docker compose run --rm telegramscrap read output/Test_posts.parquet --head 20
+```
+
+- `./data/` holds the session and all output — back it up, keep it private.
+- Stopping a scrape: `Ctrl-C` during `docker compose run` sends SIGINT and the run writes
+  a resume checkpoint; re-run the same command with `--resume`. `docker stop` (SIGTERM)
+  keeps only the periodic in-run checkpoints.
+- Without compose:
+  `docker build -t telegramscrap . && docker run --rm -it --init --env-file .env -v "$PWD/data:/data" telegramscrap login`
+
 ## Configure credentials (once)
 
 Generate `api_id` and `api_hash` at <https://my.telegram.org/apps>, then:
