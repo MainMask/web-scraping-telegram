@@ -140,6 +140,36 @@ class FloodClient(FakeClient):
         raise FloodWaitError(request=None)
 
 
+class FloodThenOkClient(FakeClient):
+    """Reaction calls raise FloodWaitError once (a soft ban), then behave normally."""
+    flooded = False
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        type(self).flooded = False
+
+    async def __call__(self, request):
+        if not type(self).flooded:
+            type(self).flooded = True
+            raise FloodWaitError(request=None)
+        return await super().__call__(request)
+
+
+class FloodAfterClient(FakeClient):
+    """Reactions work for the first call, then every call is a soft ban that never lifts."""
+    seen = 0
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        type(self).seen = 0
+
+    async def __call__(self, request):
+        type(self).seen += 1
+        if type(self).seen > 1:
+            raise FloodWaitError(request=None)
+        return await super().__call__(request)
+
+
 @pytest.fixture
 def fake_client(monkeypatch):
     monkeypatch.setattr(scrape, "TelegramClient", FakeClient)
@@ -227,11 +257,36 @@ def test_scrape_reactors(fake_client, tmp_path):
     assert any(getattr(p, "channel_id", None) == 1001 for p in FakeClient.reaction_peers)
 
 
-def test_scrape_reactors_skipped_on_flood_wait(monkeypatch, tmp_path):
-    monkeypatch.setattr(scrape, "TelegramClient", FloodClient)
-    path = scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True))
-    assert path.exists()                                  # posts still written
-    assert not list(tmp_path.glob("*reactors*"))          # nothing collected -> no file
+def test_scrape_reactors_excel_format(fake_client, tmp_path):
+    scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True, fmt="excel"))
+    r = pd.read_excel(tmp_path / "unit.test_reactors.xlsx")
+    assert set(r["Message ID"]) == {999} and not r.duplicated().any()
+
+
+def test_flood_wait_is_waited_out_then_resumes(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(scrape, "TelegramClient", FloodThenOkClient)
+    monkeypatch.setattr(scrape, "FLOOD_RETRY_BUFFER", 0)
+
+    path = scrape.run(Credentials(1, "h"),
+                      _params(tmp_path, with_reactors=True, with_participants=False))
+
+    assert list(pd.read_parquet(path)["Message ID"]) == ["30", "20"]  # nothing skipped
+    r = pd.read_parquet(tmp_path / "unit.test_reactors.parquet")
+    assert set(r["Message ID"]) == {999}                  # reactors collected after the wait
+    assert "FLOOD_WAIT" in capsys.readouterr().out
+
+
+def test_persistent_flood_stops_with_resume_hint(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(scrape, "TelegramClient", FloodAfterClient)
+    monkeypatch.setattr(scrape, "FLOOD_RETRY_BUFFER", 0)
+    monkeypatch.setattr(scrape, "FLOOD_MAX_ATTEMPTS", 2)
+
+    with pytest.raises(SystemExit):
+        scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True))
+
+    out = capsys.readouterr().out
+    assert "FLOOD_WAIT" in out and "--resume" in out
+    assert (_ckpt(tmp_path) / "resume.json").exists()     # checkpoint left for --resume
 
 
 def test_scrape_reactors_without_comments(fake_client, tmp_path):
@@ -342,7 +397,7 @@ def _seed_checkpoint(tmp_path, rows, meta):
     d = _ckpt(tmp_path)
     d.mkdir(parents=True, exist_ok=True)
     if rows:
-        pd.DataFrame(rows).to_parquet(d / "posts.parquet")
+        pd.DataFrame(rows).to_parquet(d / "posts_part_00000.parquet")
     (d / "resume.json").write_text(json.dumps(meta), encoding="utf-8")
 
 
@@ -396,7 +451,7 @@ def test_scrape_gives_up_and_hints_resume(monkeypatch, tmp_path, capsys):
     assert "telegramscrap scrape" in out and "--resume" in out and "--name unit.test" in out
     meta = json.loads((_ckpt(tmp_path) / "resume.json").read_text())
     assert meta["last_id"] == 30 and meta["channel_index"] == 0
-    assert len(pd.read_parquet(_ckpt(tmp_path) / "posts.parquet")) == 1
+    assert len(pd.read_parquet(_ckpt(tmp_path) / "posts_part_00000.parquet")) == 1
 
 
 def test_keyboard_interrupt_checkpoints_and_hints(monkeypatch, tmp_path, capsys):
@@ -491,10 +546,53 @@ def test_scrape_success_clears_resume_json(fake_client, tmp_path):
 
 
 def test_checkpoint_is_parquet_even_for_excel(fake_client, tmp_path):
-    scrape.run(Credentials(1, "h"), _params(tmp_path, fmt="excel", with_participants=False))
+    # call _scrape directly: run() clears the checkpoint dir on a clean finish
+    asyncio.run(scrape._scrape(Credentials(1, "h"),
+                               _params(tmp_path, fmt="excel", with_participants=False)))
     d = _ckpt(tmp_path)
-    assert (d / "posts.parquet").exists()
-    assert not (d / "posts.xlsx").exists()
+    assert list(d.glob("posts_part_*.parquet"))
+    assert not list(d.glob("*.xlsx"))
+
+
+def test_checkpoint_writes_incremental_shards(fake_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(scrape, "CHECKPOINT_EVERY", 1)
+    path = scrape.run(Credentials(1, "h"), _params(tmp_path, with_participants=False))
+    # run() clears checkpoint/ on success, so inspect the per-channel snapshot +
+    # the final file: both must carry every scraped post despite the tiny flushes
+    assert list(pd.read_parquet(path)["Message ID"]) == ["30", "20"]
+    snap = next((tmp_path / "unit.test_partial").glob("*_until_*.parquet"))
+    assert sorted(pd.read_parquet(snap)["Message ID"].astype(str)) == ["20", "30"]
+
+
+def test_resume_migrates_legacy_checkpoint(monkeypatch, tmp_path):
+    monkeypatch.setattr(scrape, "TelegramClient", ResumeClient)
+    d = _ckpt(tmp_path)
+    d.mkdir(parents=True)
+    pd.DataFrame([_CK_ROW_30, _CK_ROW_20]).to_parquet(d / "posts.parquet")  # pre-shard layout
+    (d / "resume.json").write_text(json.dumps(
+        _resume_meta(tmp_path, last_id=20, t_index=2)), encoding="utf-8")
+
+    path = scrape.run(Credentials(1, "h"), _params(tmp_path, resume=True))
+
+    assert ResumeClient.calls[0][1] == 20                       # cursor honoured
+    assert list(pd.read_parquet(path)["Message ID"]) == ["30", "20", "15"]  # legacy rows kept
+
+
+def test_fresh_run_clears_stale_shards(fake_client, tmp_path):
+    d = _ckpt(tmp_path)
+    d.mkdir(parents=True)
+    pd.DataFrame([{**_CK_ROW_30, "Message ID": 777, "Url": "u"}]).to_parquet(
+        d / "posts_part_00000.parquet")  # leftover from a previous job, same --name
+
+    path = scrape.run(Credentials(1, "h"), _params(tmp_path, with_participants=False))
+    assert list(pd.read_parquet(path)["Message ID"]) == ["30", "20"]  # 777 not pulled in
+
+
+def test_clean_finish_removes_checkpoint_dir_contents(fake_client, tmp_path):
+    scrape.run(Credentials(1, "h"), _params(tmp_path, with_participants=False))
+    d = _ckpt(tmp_path)
+    assert not list(d.glob("*.parquet"))
+    assert not (d / "resume.json").exists()
 
 
 def test_resume_flag_missing_checkpoint_refuses(monkeypatch, tmp_path):
@@ -507,22 +605,87 @@ def test_resume_flag_missing_checkpoint_refuses(monkeypatch, tmp_path):
         scrape.run(Credentials(1, "h"), _params(tmp_path, resume=True))
 
 
+def _reactor_row(mid, rid, reaction, group="@c"):
+    return {"Type": "reactor", "Target": "post", "Group": group, "Message ID": mid,
+            "Post ID": mid, "Url": "u", "Reactor ID": rid, "Reactor Username": "",
+            "Reactor Name": "", "Reaction": reaction, "Date": "d"}
+
+
 def test_run_dedups_reactor_rows(monkeypatch, tmp_path):
     posts = pd.DataFrame([{"Type": "text", "Group": "@c", "Message ID": 1,
                            "Date": "2024-01-01 00:00:00", "Comments List": "[]", "Url": "u"}])
-    dup = pd.DataFrame([
-        {"Group": "@c", "Message ID": 1, "Reactor ID": 7, "Reaction": "🔥", "Date": "d"},
-        {"Group": "@c", "Message ID": 1, "Reactor ID": 7, "Reaction": "🔥", "Date": "d"},
-        {"Group": "@c", "Message ID": 1, "Reactor ID": 8, "Reaction": "👍", "Date": "d"},
-    ])
 
     async def fake_scrape(creds, params):
-        return posts, dup
+        d = _ckpt(tmp_path)
+        d.mkdir(parents=True, exist_ok=True)
+        # shard 0: a within-shard repeat + two distinct reactions for msg 1
+        pd.DataFrame([_reactor_row(1, 7, "🔥"), _reactor_row(1, 7, "🔥"),
+                      _reactor_row(1, 8, "👍")]).to_parquet(d / "reactors_part_00000.parquet")
+        # shard 1: msg 1 re-scraped after a --resume (same rows) + a new msg 2
+        pd.DataFrame([_reactor_row(1, 7, "🔥"), _reactor_row(1, 8, "👍"),
+                      _reactor_row(2, 9, "❤")]).to_parquet(d / "reactors_part_00001.parquet")
+        return posts
 
     monkeypatch.setattr(scrape, "_scrape", fake_scrape)
     scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True, with_participants=False))
     r = pd.read_parquet(tmp_path / "unit.test_reactors.parquet")
-    assert len(r) == 2
+    assert len(r) == 3                                     # (1,7,🔥) (1,8,👍) (2,9,❤)
+    assert not r.duplicated().any()
+    assert sorted(r["Message ID"]) == [1, 1, 2]
+
+
+def test_consolidate_reactors_streaming(tmp_path):
+    d = tmp_path / "ckpt"
+    d.mkdir()
+    pd.DataFrame([_reactor_row(10, 1, "🔥"), _reactor_row(10, 1, "🔥"),   # within-shard dup
+                  _reactor_row(10, 2, "👍")]).to_parquet(d / "reactors_part_00000.parquet")
+    pd.DataFrame([_reactor_row(10, 1, "🔥"), _reactor_row(10, 2, "👍")]   # msg 10 re-scraped
+                 ).to_parquet(d / "reactors_part_00001.parquet")
+    pd.DataFrame([_reactor_row(11, 3, "❤")]).to_parquet(d / "reactors_part_00002.parquet")
+
+    dest, n = scrape._consolidate_reactors(d, tmp_path / "out.parquet")
+    out = pd.read_parquet(dest)
+    assert n == len(out) == 3
+    assert {(g, m, i, x) for g, m, i, x in
+            zip(out["Group"], out["Message ID"], out["Reactor ID"], out["Reaction"])} == {
+        ("@c", 10, 1, "🔥"), ("@c", 10, 2, "👍"), ("@c", 11, 3, "❤")}
+
+
+def test_read_shards_stitches_mismatched_schemas(tmp_path):
+    # real scrapes produce shards whose all-None columns (Author/Views/Shares on
+    # unsigned or non-broadcast posts) infer a different parquet type per batch
+    d = tmp_path / "ckpt"
+    d.mkdir()
+    pd.DataFrame([{"Message ID": 1, "Author": None, "Views": None},
+                  {"Message ID": 2, "Author": None, "Views": None}]
+                 ).to_parquet(d / "posts_part_00000.parquet")
+    pd.DataFrame([{"Message ID": 3, "Author": "Signed", "Views": 55}]
+                 ).to_parquet(d / "posts_part_00001.parquet")
+
+    df = scrape._read_shards(d, "posts")
+    assert sorted(df["Message ID"]) == [1, 2, 3]
+    assert df.set_index("Message ID").loc[3, "Author"] == "Signed"
+
+
+def test_until_snapshot_is_incremental(fake_client, tmp_path, monkeypatch):
+    async def _nosleep(*a, **k):
+        return None
+
+    monkeypatch.setattr(scrape.asyncio, "sleep", _nosleep)  # skip the 60s/channel pause
+
+    seen_starts = []
+    real = scrape._read_shards
+
+    def spy(ckpt_dir, base, start=0):
+        if base == "posts":
+            seen_starts.append(start)
+        return real(ckpt_dir, base, start)
+
+    monkeypatch.setattr(scrape, "_read_shards", spy)
+    scrape.run(Credentials(1, "h"), _params(tmp_path, channels=["@a", "@b"],
+                                            with_participants=False))
+    # channel @a snapshots from 0; channel @b must not re-read @a's shards
+    assert seen_starts[0] == 0 and seen_starts[1] > 0
 
 
 def test_combine_ignores_resume_checkpoint(tmp_path):

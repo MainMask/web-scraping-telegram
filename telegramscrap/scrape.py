@@ -10,19 +10,28 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from telethon import TelegramClient, utils
+from telethon.errors import FloodWaitError
 from telethon.tl.functions.messages import GetMessageReactionsListRequest
 from telethon.tl.types import PeerChannel, PeerUser, User
 
 from telegramscrap.config import Credentials
-from telegramscrap.datafiles import clean_xml_text, format_duration, read_table, save_table
+from telegramscrap.datafiles import clean_xml_text, format_duration, save_table
 
 SEP = "-" * 80
 
-# Telethon auto-sleeps and retries on FLOOD_WAIT up to this many seconds (its
-# default is only 60), so ordinary rate limits are waited out instead of
-# skipping the data. Longer waits (a soft ban) still raise and are logged.
-FLOOD_SLEEP_THRESHOLD = 600
+# Telethon auto-sleeps and retries the exact request on FLOOD_WAIT up to this many
+# seconds (its default is only 60), so ordinary rate limits and short soft bans are
+# waited out transparently instead of skipping the data. Longer waits raise
+# FloodWaitError, which the channel loop checkpoints and waits out itself.
+FLOOD_SLEEP_THRESHOLD = 3600
+# a FloodWaitError longer than this (or too many in a row) stops the run with a
+# --resume hint rather than sleeping for the better part of a day.
+FLOOD_MAX_WAIT = 6 * 3600
+FLOOD_MAX_ATTEMPTS = 12
+FLOOD_RETRY_BUFFER = 5  # extra seconds slept on top of the ban so we don't re-trip it
 # small pause after each reaction-list request to keep the burst rate down
 REACTOR_CALL_DELAY = 0.5
 
@@ -48,6 +57,122 @@ def _progress_bar(frac: float, width: int = 20) -> str:
     frac = min(max(frac, 0.0), 1.0)
     filled = round(frac * width)
     return "█" * filled + "░" * (width - filled)
+
+
+# How often (in scraped posts) to flush the in-memory buffer to a checkpoint shard.
+CHECKPOINT_EVERY = 1000
+
+# One (person, message, reaction) is unique; a --resume overlap or a repeated
+# reaction-list page can re-emit a row, so exact repeats on this key are dropped.
+REACTOR_DEDUP_KEY = ["Group", "Message ID", "Reactor ID", "Reaction"]
+
+
+def _atomic_parquet(df: pd.DataFrame, dest: Path) -> None:
+    """Write via a temp file + rename, so an OOM-kill mid-write can't leave a
+    half-written shard behind."""
+    tmp = dest.with_name(dest.name + ".tmp")
+    df.to_parquet(tmp, index=False)
+    tmp.replace(dest)
+
+
+def _atomic_write_text(dest: Path, text: str) -> None:
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(dest)
+
+
+def _shard_paths(ckpt_dir: Path, base: str) -> list[Path]:
+    return sorted(ckpt_dir.glob(f"{base}_part_*.parquet"))
+
+
+def _shard_num(p: Path) -> int:
+    return int(p.stem.rsplit("_", 1)[1])
+
+
+def _read_shards(ckpt_dir: Path, base: str, start: int = 0) -> pd.DataFrame:
+    """Concatenate `<base>_part_NNNNN.parquet` shards with index >= start into one
+    frame. O(total) once — used for the posts output and the excel fallback.
+
+    pandas concat (not a single pyarrow read): a column that is all-null in one
+    batch and typed in another gets inferred as different parquet types per shard,
+    which pyarrow refuses to stitch but pandas coerces cleanly."""
+    paths = [p for p in _shard_paths(ckpt_dir, base) if _shard_num(p) >= start]
+    if not paths:
+        return pd.DataFrame()
+    return pd.concat((pd.read_parquet(p) for p in paths), ignore_index=True)
+
+
+def _consolidate_reactors(ckpt_dir: Path, dest: Path) -> tuple[Path, int]:
+    """Stream the reactor shards into one parquet file, deduplicating without ever
+    holding the whole table:
+      * within a shard — on the full row key (a repeated reaction-list page);
+      * across shards — at message level: every reactor row of a message is written
+        to a single shard (a message's rows are appended together, before the
+        `t_index % CHECKPOINT_EVERY` flush), so the same (Group, Message ID) turning
+        up in a later shard is a --resume-overlap re-scrape and its copy is dropped.
+    Memory: O(distinct reacted messages) for the seen-set, never O(reactor rows).
+
+    Caller guarantees at least one non-empty reactor shard, so `writer` is always
+    created (every shard is written from a non-empty buffer)."""
+    seen: set = set()
+    tmp = dest.with_name(dest.name + ".tmp")
+    writer = None
+    total = 0
+    try:
+        for p in _shard_paths(ckpt_dir, "reactors"):
+            part = pd.read_parquet(p).drop_duplicates(subset=REACTOR_DEDUP_KEY)
+            msg_keys = list(zip(part["Group"].astype(str), part["Message ID"]))
+            fresh = [k not in seen for k in msg_keys]
+            part = part[fresh]
+            if part.empty:
+                continue
+            seen.update(k for k, f in zip(msg_keys, fresh) if f)
+            table = pa.Table.from_pandas(part, preserve_index=False)
+            if writer is None:
+                writer = pq.ParquetWriter(tmp, table.schema)
+            else:
+                table = table.cast(writer.schema)
+            writer.write_table(table)
+            total += len(part)
+    finally:
+        if writer is not None:
+            writer.close()
+    tmp.replace(dest)  # atomic: no half-written final file if this step is killed
+    return dest, total
+
+
+def _count_shard_rows(ckpt_dir: Path, base: str) -> int:
+    """Row total across `<base>` shards, from parquet footer metadata only — no row
+    data is read into memory."""
+    return sum(pq.ParquetFile(p).metadata.num_rows for p in _shard_paths(ckpt_dir, base))
+
+
+def _next_shard_index(ckpt_dir: Path) -> int:
+    idxs = [_shard_num(p)
+            for base in ("posts", "reactors")
+            for p in _shard_paths(ckpt_dir, base)]
+    return max(idxs) + 1 if idxs else 0
+
+
+def _migrate_legacy_checkpoint(ckpt_dir: Path) -> None:
+    """A pre-shard checkpoint kept a single overwriting `posts.parquet` /
+    `reactors.parquet`. Promote each to shard 0 so `--resume` keeps that data
+    without ever loading it."""
+    for base in ("posts", "reactors"):
+        legacy = ckpt_dir / f"{base}.parquet"
+        if legacy.exists() and not _shard_paths(ckpt_dir, base):
+            legacy.rename(ckpt_dir / f"{base}_part_00000.parquet")
+
+
+def _clear_checkpoint(ckpt_dir: Path) -> None:
+    """Remove a previous job's checkpoint artefacts: a fresh (non-resume) run under
+    the same --name must not inherit stale shards, and a clean finish leaves nothing
+    behind."""
+    if not ckpt_dir.exists():
+        return
+    for p in (*ckpt_dir.glob("*.parquet"), *ckpt_dir.glob("*.tmp")):
+        p.unlink()
+    (ckpt_dir / "resume.json").unlink(missing_ok=True)
 
 
 @dataclass
@@ -211,9 +336,9 @@ async def _collect_reactors(client, peer, ref: _ChannelRef, post_id: int, msg, t
             if not res.next_offset:
                 break
             offset = res.next_offset
-    except NET_ERRORS:  # a real disconnect: let the channel loop retry, don't skip data
-        raise
-    except Exception as exc:  # BroadcastForbidden, FloodWait past the threshold, thread removed, ...
+    except (*NET_ERRORS, FloodWaitError):  # disconnect / long soft ban: let the
+        raise                             # channel loop wait it out and redo, don't skip
+    except Exception as exc:  # BroadcastForbidden, thread removed, ...
         print(f"  ! reactors for {ref.slug}/{post_id} ({target} {msg.id}): {exc}")
     return rows
 
@@ -255,9 +380,9 @@ async def _collect_comments(
             if with_reactors:
                 peer = disc_peer or getattr(c, "input_chat", None) or ref.arg
                 reactors += await _collect_reactors(client, peer, ref, message.id, c, "comment")
-    except NET_ERRORS:  # a real disconnect: let the channel loop retry, don't skip data
-        raise
-    except Exception as exc:  # transient (flood wait, thread just removed, ...)
+    except (*NET_ERRORS, FloodWaitError):  # disconnect / long soft ban: let the
+        raise                             # channel loop wait it out and redo, don't skip
+    except Exception as exc:  # thread just removed, ...
         print(f"  ! comments for {ref.slug}/{message.id}: {exc}")
     return comments, reactors
 
@@ -291,7 +416,7 @@ async def _collect_post(client, ref: _ChannelRef, message, params: ScrapeParams)
     return row, reactors
 
 
-async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFrame, pd.DataFrame]:
+async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
     params.out_dir.mkdir(parents=True, exist_ok=True)
     # per-channel history snapshots go in partial_dir; the resume machinery goes one
     # level down in ckpt_dir, so `combine --input <name>_partial` only sees the snapshots
@@ -314,16 +439,31 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
     def time_is_up() -> bool:
         return bool(params.timeout) and time.time() - start_time > params.timeout
 
+    shard_index = 0
+
     def _write_checkpoint(channel_index: int, last_id: int) -> None:
-        if not data:
-            return
+        nonlocal shard_index
+        if not data and not reactors and not (ckpt_dir / "resume.json").exists():
+            return  # nothing scraped yet and no cursor to advance
         ckpt_dir.mkdir(parents=True, exist_ok=True)
-        # always parquet: lossless (excel would truncate long cells) and format-stable
-        # so --resume finds it regardless of the run's --format
-        save_table(pd.DataFrame(data), ckpt_dir / "posts", "parquet")
+        # append-only: write ONLY the rows gathered since the previous checkpoint to
+        # a fresh shard, then free them. Earlier shards are never reread or rewritten,
+        # so a checkpoint costs O(batch) regardless of run size. Always parquet:
+        # lossless and format-stable so --resume finds it whatever the run's --format.
+        wrote = False
+        if data:
+            _atomic_parquet(pd.DataFrame(data),
+                            ckpt_dir / f"posts_part_{shard_index:05}.parquet")
+            data.clear()
+            wrote = True
         if reactors:
-            save_table(pd.DataFrame(reactors), ckpt_dir / "reactors", "parquet")
-        (ckpt_dir / "resume.json").write_text(json.dumps({
+            _atomic_parquet(pd.DataFrame(reactors),
+                            ckpt_dir / f"reactors_part_{shard_index:05}.parquet")
+            reactors.clear()
+            wrote = True
+        if wrote:
+            shard_index += 1
+        _atomic_write_text(ckpt_dir / "resume.json", json.dumps({
             "name": params.name,
             "channels": params.channels,
             "keyword": params.keyword,
@@ -333,40 +473,40 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
             "last_id": last_id,
             "t_index": t_index,
             "updated": datetime.now(timezone.utc).isoformat(),
-        }, indent=2), encoding="utf-8")
+        }, indent=2))
 
     resume_channel_index = 0
     resume_last_id = 0
-    if params.resume:
+    resume_meta_ok = params.resume and (ckpt_dir / "resume.json").exists()
+    if params.resume and not resume_meta_ok:
+        print(f"  ! --resume: {ckpt_dir / 'resume.json'} not found; starting a fresh run")
+    if not resume_meta_ok:
+        _clear_checkpoint(ckpt_dir)  # fresh run: never inherit a previous job's shards
+    else:
         rj = ckpt_dir / "resume.json"
-        if not rj.exists():
-            print(f"  ! --resume: {rj} not found; starting a fresh run")
-        else:
-            meta = json.loads(rj.read_text(encoding="utf-8"))
-            if (meta.get("channels") != params.channels
-                    or meta.get("keyword", "") != params.keyword
-                    or meta.get("date_min") != params.date_min.isoformat()
-                    or meta.get("date_max") != params.date_max.isoformat()):
-                raise SystemExit("--resume: resume.json does not match the current "
-                                 "arguments (channels / keyword / dates). Re-run with "
-                                 "the same command as the interrupted job.")
-            p_ck = ckpt_dir / "posts.parquet"
-            r_ck = ckpt_dir / "reactors.parquet"
-            if not p_ck.exists() and int(meta.get("t_index", 0)) > 0:
-                raise SystemExit(f"--resume: {p_ck} is missing but resume.json reports "
-                                 f"{meta['t_index']} scraped posts — cannot resume safely.")
-            if p_ck.exists():
-                data = read_table(p_ck).to_dict("records")
-            if r_ck.exists():
-                reactors = read_table(r_ck).to_dict("records")
-            t_index = len(data)  # the checkpoint parquet is the source of truth, not meta
-            resume_channel_index = int(meta["channel_index"])
-            resume_last_id = int(meta["last_id"])
-            print(SEP)
-            print(f"Resuming '{params.name}': channel {resume_channel_index + 1}/{n_channels}, "
-                  f"{len(data)} posts + {len(reactors)} reactor rows reloaded, "
-                  f"continuing from id {resume_last_id or 'newest'}")
-            print(SEP)
+        meta = json.loads(rj.read_text(encoding="utf-8"))
+        if (meta.get("channels") != params.channels
+                or meta.get("keyword", "") != params.keyword
+                or meta.get("date_min") != params.date_min.isoformat()
+                or meta.get("date_max") != params.date_max.isoformat()):
+            raise SystemExit("--resume: resume.json does not match the current "
+                             "arguments (channels / keyword / dates). Re-run with "
+                             "the same command as the interrupted job.")
+        _migrate_legacy_checkpoint(ckpt_dir)
+        if not _shard_paths(ckpt_dir, "posts") and int(meta.get("t_index", 0)) > 0:
+            raise SystemExit(f"--resume: checkpoint shards are missing from {ckpt_dir} "
+                             f"but resume.json reports {meta['t_index']} scraped posts "
+                             f"— cannot resume safely.")
+        shard_index = _next_shard_index(ckpt_dir)
+        t_index = _count_shard_rows(ckpt_dir, "posts")  # footer metadata only, no data
+        n_reactor_rows = _count_shard_rows(ckpt_dir, "reactors")
+        resume_channel_index = int(meta["channel_index"])
+        resume_last_id = int(meta["last_id"])
+        print(SEP)
+        print(f"Resuming '{params.name}': channel {resume_channel_index + 1}/{n_channels}, "
+              f"{t_index} posts + {n_reactor_rows} reactor rows already saved in "
+              f"{shard_index} shard(s), continuing from id {resume_last_id or 'newest'}")
+        print(SEP)
 
     client = TelegramClient(params.session, creds.api_id, creds.api_hash,
                             flood_sleep_threshold=FLOOD_SLEEP_THRESHOLD,
@@ -376,6 +516,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
     await client.start(phone=creds.phone, password=creds.password)
 
     i, last_id = resume_channel_index, resume_last_id  # for the Ctrl-C handler below
+    snapshot_from = 0  # first shard index not yet written to an `_until_` snapshot
     try:
         for i, channel in enumerate(params.channels):
             if i < resume_channel_index:
@@ -387,6 +528,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
             c_index = 0
             last_id = resume_last_id if i == resume_channel_index else 0
             attempt = 0
+            flood_attempts = 0
             done_channel = False
             try:
                 ref = _channel_ref(channel)
@@ -426,7 +568,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
                                 f"| elapsed {format_duration(now)} | ETA {eta}"
                             )
 
-                            if t_index % 1000 == 0:
+                            if t_index % CHECKPOINT_EVERY == 0:
                                 _write_checkpoint(i, last_id)
                                 print(f"  -> checkpoint: {t_index} posts")
 
@@ -434,6 +576,25 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
                                 break
                         else:
                             done_channel = True
+                    except FloodWaitError as exc:  # a soft ban longer than FLOOD_SLEEP_THRESHOLD
+                        flood_attempts += 1
+                        _write_checkpoint(i, last_id)
+                        wait = exc.seconds + FLOOD_RETRY_BUFFER
+                        if wait > FLOOD_MAX_WAIT or flood_attempts > FLOOD_MAX_ATTEMPTS:
+                            print(f"  ! {label}: FLOOD_WAIT {exc.seconds}s - giving up "
+                                  f"(checkpoint saved at {t_index} posts)")
+                            raise
+                        print(f"  ! {label}: FLOOD_WAIT {exc.seconds}s - checkpoint saved at "
+                              f"{t_index} posts, waiting it out "
+                              f"({flood_attempts}/{FLOOD_MAX_ATTEMPTS}), then resuming from id "
+                              f"{last_id or 'newest'}")
+                        await asyncio.sleep(wait)
+                        try:
+                            if not client.is_connected():
+                                await client.connect()
+                        except Exception as ce:
+                            print(f"  ! reconnect failed: {ce}")
+                        continue
                     except NET_ERRORS as exc:
                         attempt += 1
                         _write_checkpoint(i, last_id)
@@ -455,12 +616,18 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
 
                 print(f"##### {label}: done, {c_index:05} posts | "
                       f"overall {((i + 1) / n_channels) * 100:.0f}% #####")
+                # flush the tail buffer to a shard and advance the resume cursor
+                # (on every exit path from the channel, not just a clean finish)
+                _write_checkpoint(i + 1 if done_channel else i,
+                                  0 if done_channel else last_id)
                 partial_dir.mkdir(exist_ok=True)
                 partial = partial_dir / f"{ref.slug}_until_{t_index:05}"
-                save_table(pd.DataFrame(data), partial, params.fmt)
-                if done_channel:
-                    _write_checkpoint(i + 1, 0)
-            except NET_ERRORS:  # bubble to the Ctrl-C/finally scope and out to run()
+                # only this channel's new shards (after a --resume the first one
+                # covers everything not yet snapshotted, once)
+                save_table(_read_shards(ckpt_dir, "posts", start=snapshot_from),
+                           partial, params.fmt)
+                snapshot_from = shard_index
+            except (*NET_ERRORS, FloodWaitError):  # bubble to the Ctrl-C/finally scope and out to run()
                 raise
             except Exception as exc:
                 print(f"{channel} error: {exc}")
@@ -476,10 +643,14 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> tuple[pd.DataFram
     finally:
         await client.disconnect()
 
+    # reached only on a run that finished without an exception (a crash bubbles to
+    # run() before this and prints the --resume hint). Posts need the whole frame
+    # for normalize/sort; reactors are consolidated shard-by-shard in run().
+    posts_df = _read_shards(ckpt_dir, "posts")
     print(SEP)
     print(f"Concluded: {t_index:05} posts scraped")
     print(SEP)
-    return pd.DataFrame(data), pd.DataFrame(reactors)
+    return posts_df
 
 
 def _resume_command(params: ScrapeParams) -> str:
@@ -519,10 +690,11 @@ def _resume_command(params: ScrapeParams) -> str:
 def run(creds: Credentials, params: ScrapeParams) -> Path:
     from telegramscrap.analysis import normalize_posts, participants
 
-    rj = params.out_dir / f"{params.name}_partial" / "checkpoint" / "resume.json"
+    ckpt_dir = params.out_dir / f"{params.name}_partial" / "checkpoint"
+    rj = ckpt_dir / "resume.json"
     try:
-        df, reactors = asyncio.run(_scrape(creds, params))
-    except (*NET_ERRORS, KeyboardInterrupt) as exc:
+        df = asyncio.run(_scrape(creds, params))
+    except (*NET_ERRORS, FloodWaitError, KeyboardInterrupt) as exc:
         detail = f": {exc}" if str(exc) else ""
         print(SEP)
         print(f"Run stopped: {type(exc).__name__}{detail}")
@@ -536,14 +708,17 @@ def run(creds: Credentials, params: ScrapeParams) -> Path:
     print(f"Posts:    {path}  ({len(df)} rows)")
 
     r_path = None
-    if params.with_reactors and not reactors.empty:
-        # a --resume overlap or a repeated reaction-list page can re-emit a row;
-        # one (person, message, reaction) is unique, so drop exact repeats
-        reactors = reactors.drop_duplicates(
-            subset=["Group", "Message ID", "Reactor ID", "Reaction"], ignore_index=True
-        )
-        r_path = save_table(reactors, params.out_dir / f"{params.name}_reactors", params.fmt)
-        print(f"Reactors: {r_path}  ({len(reactors)} rows)")
+    if params.with_reactors and _shard_paths(ckpt_dir, "reactors"):
+        if params.fmt == "parquet":
+            # streams the shards, deduplicating on REACTOR_DEDUP_KEY (see _consolidate_reactors)
+            r_path, n_reactors = _consolidate_reactors(
+                ckpt_dir, params.out_dir / f"{params.name}_reactors.parquet")
+        else:  # excel: small runs only, keep the in-memory path
+            rdf = _read_shards(ckpt_dir, "reactors").drop_duplicates(
+                subset=REACTOR_DEDUP_KEY, ignore_index=True)
+            r_path = save_table(rdf, params.out_dir / f"{params.name}_reactors", params.fmt)
+            n_reactors = len(rdf)
+        print(f"Reactors: {r_path}  ({n_reactors} rows)")
 
     if params.with_participants:
         p_out = params.out_dir / f"{params.name}_participants"
@@ -553,5 +728,5 @@ def run(creds: Credentials, params: ScrapeParams) -> Path:
         except SystemExit as exc:  # nothing to build (no comments, no reactors, ...)
             print(f"Participants: skipped ({exc})")
 
-    rj.unlink(missing_ok=True)  # clean finish -> no resume pointer left behind
+    _clear_checkpoint(ckpt_dir)  # clean finish -> drop the resume cursor and shards
     return path

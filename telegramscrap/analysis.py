@@ -46,10 +46,12 @@ def normalize_posts(df: pd.DataFrame, dedup_cols=("Group", "Message ID"),
     print(f"Normalize: {len(df)} rows, {dups} duplicate(s) on {dedup_cols} dropped")
     df = df.drop_duplicates(subset=dedup_cols)
 
-    df["Comments"] = [
-        _count_comments(row.get("Comments List"))
-        for row in tqdm(df.to_dict(orient="records"), desc="Counting comments")
-    ]
+    if "Comments List" in df.columns:
+        df["Comments"] = [
+            _count_comments(v) for v in tqdm(df["Comments List"], desc="Counting comments")
+        ]
+    else:
+        df["Comments"] = 0
     df["Comments"] = df["Comments"].astype(int)
     if "Media" in df.columns:
         df["Media"] = df["Media"].astype(bool)
@@ -83,10 +85,15 @@ def _save(df: pd.DataFrame, output: str, fmt: str) -> Path:
     return save_table(df, output, fmt)
 
 
-def _comment_pairs(df: pd.DataFrame) -> list[tuple[dict, dict]]:
-    """(post_row, comment_dict) for every comment in the Comments List column."""
-    pairs = []
-    for post in df.to_dict(orient="records"):
+def _comment_pairs(df: pd.DataFrame):
+    """Yield (post_info, comment_dict) for every comment in the Comments List column.
+
+    post_info carries only the few post fields callers need, so the whole frame is
+    never materialised as dicts.
+    """
+    cols = [c for c in ("Group", "Message ID", "Url", "Comments List") if c in df.columns]
+    for values in zip(*(df[c] for c in cols)):
+        post = dict(zip(cols, values))
         raw = post.get("Comments List")
         if isinstance(raw, str):
             items = json.loads(raw) if raw.strip() else []
@@ -94,8 +101,9 @@ def _comment_pairs(df: pd.DataFrame) -> list[tuple[dict, dict]]:
             items = raw
         else:
             items = []
-        pairs += [(post, c) for c in items if c.get("Type") == "comment"]
-    return pairs
+        for c in items:
+            if isinstance(c, dict) and c.get("Type") == "comment":
+                yield post, c
 
 
 def explode_comments(input_path: str, output: str, fmt: str = "parquet") -> None:
@@ -172,10 +180,10 @@ def participants(input_path: str, output: str, reactors: str | None = None,
     for rf in reactor_files:
         rdf = read_table(rf)
         _require_columns(rdf, ["Reactor ID", "Reactor Username"], str(rf))
+        names = rdf["Reactor Name"] if "Reactor Name" in rdf.columns else [""] * len(rdf)
         rows += [
-            {"ID": r.get("Reactor ID"), "Username": r.get("Reactor Username") or "",
-             "Name": r.get("Reactor Name") or "", "Comments": 0, "Reactions": 1}
-            for r in rdf.to_dict(orient="records")
+            {"ID": rid, "Username": ru or "", "Name": rn or "", "Comments": 0, "Reactions": 1}
+            for rid, ru, rn in zip(rdf["Reactor ID"], rdf["Reactor Username"], names)
         ]
         print(f"  + reactors from {rf.name}")
 

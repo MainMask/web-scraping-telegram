@@ -138,11 +138,12 @@ those are skipped with a note; in practice this captures the reactions left on t
 Pass `--no-reactors` to skip it.
 
 On a busy channel this is easily thousands of requests. `FLOOD_WAIT` responses of up
-to 10 minutes are waited out and retried automatically (no data lost) — the wait is
+to an hour are waited out and retried automatically (no data lost) — the wait is
 printed to the terminal (`… WARNING  Sleeping for Ns …`); a small pause between
-reaction-list calls keeps the burst rate down. A longer wait means a temporary soft
-ban — it is logged and that message skipped. Keep runs small with `--max-messages` /
-a narrow date range, or add `--no-reactors`.
+reaction-list calls keeps the burst rate down. A longer wait (a temporary soft ban)
+is checkpointed and waited out too — up to 6 hours, then the run stops with a
+ready-to-paste `--resume` command; nothing is skipped. Keep runs small with
+`--max-messages` / a narrow date range, or add `--no-reactors`.
 
 Output is **parquet** by default. Use `--format excel` only for small runs — Excel truncates
 any cell over 32,767 characters (the `Comments List` of a busy post easily exceeds that);
@@ -165,11 +166,14 @@ Output files land in `--out-dir`, named after `--name`:
   `Type, Target, Group, Message ID, Post ID, Url, Reactor ID, Reactor Username, Reactor Name, Reaction, Date`
 - `<name>_partial/` — `<slug>_until_NNNNN` snapshots written after each channel
   (post-shaped, so `combine --input <name>_partial` merges just these). The resume
-  machinery lives in `<name>_partial/checkpoint/` — an overwriting
-  `posts.parquet` / `reactors.parquet` / `resume.json` trio (always parquet,
-  whatever `--format` is), rewritten every 1,000 messages and on every reconnect.
-  Safe to delete once `<name>_posts` is written (`resume.json` is removed
-  automatically on a clean finish).
+  machinery lives in `<name>_partial/checkpoint/` — append-only
+  `posts_part_NNNNN.parquet` / `reactors_part_NNNNN.parquet` shards (always parquet,
+  whatever `--format` is) plus a `resume.json` cursor, written every 1,000 messages
+  and on every reconnect. Each checkpoint only writes the batch since the previous
+  one, so its cost and `--resume`'s memory stay flat no matter how much has been
+  scraped. A pre-shard `posts.parquet` / `reactors.parquet` from an older run is
+  migrated to a shard automatically on `--resume`. The whole `checkpoint/` folder is
+  removed on a clean finish.
 
 Re-running with the same `--name` overwrites the previous
 `<name>_posts` / `<name>_participants` / `<name>_reactors`.
@@ -182,8 +186,8 @@ still fails the current channel is restarted from the last checkpointed message 
 so a passing outage costs nothing.
 
 If the run does die (a very long outage, a crash, `Ctrl-C`) it prints the ready-to-paste
-command that resumes it — the same arguments plus `--resume` — which reloads
-`<name>_partial/` and continues from the last checkpoint. `Ctrl-C` writes a fresh
+command that resumes it — the same arguments plus `--resume` — which reads the
+checkpoint cursor in `<name>_partial/` and continues from it. `Ctrl-C` writes a fresh
 checkpoint on the way out. `--resume` refuses to run if the channels / keyword / dates
 differ from the interrupted job. (After a hard power-off, nothing is printed — add
 `--resume` to your original command by hand.)
