@@ -426,7 +426,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
     data: list[dict] = []
     reactors: list[dict] = []
     t_index = 0
-    start_time = time.time()
+    start_time = time.monotonic()
 
     n_channels = len(params.channels)
     span = (params.date_max - params.date_min).total_seconds()
@@ -437,7 +437,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
         return min(max((params.date_max - msg_date).total_seconds() / span, 0.0), 1.0)
 
     def time_is_up() -> bool:
-        return bool(params.timeout) and time.time() - start_time > params.timeout
+        return bool(params.timeout) and time.monotonic() - start_time > params.timeout
 
     shard_index = 0
 
@@ -524,7 +524,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
             if t_index >= params.max_messages or time_is_up():
                 break
 
-            loop_start = time.time()
+            loop_start = time.monotonic()
             c_index = 0
             last_id = resume_last_id if i == resume_channel_index else 0
             attempt = 0
@@ -556,7 +556,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
                             last_id = message.id
                             date_str = row["Date"]
 
-                            now = time.time() - start_time
+                            now = time.monotonic() - start_time
                             cf = _date_frac(message.date)                  # current channel fraction
                             overall = (i + cf) / n_channels
                             eta = (format_duration(now / overall - now)
@@ -633,7 +633,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
                 print(f"{channel} error: {exc}")
 
             # be gentle: at least 60s per channel
-            spent = time.time() - loop_start
+            spent = time.monotonic() - loop_start
             if spent < 60 and i < len(params.channels) - 1:
                 await asyncio.sleep(60 - spent)
     except KeyboardInterrupt:

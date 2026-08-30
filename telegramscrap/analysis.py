@@ -55,7 +55,7 @@ def normalize_posts(df: pd.DataFrame, dedup_cols=("Group", "Message ID"),
     df["Comments"] = df["Comments"].astype(int)
     if "Media" in df.columns:
         df["Media"] = df["Media"].astype(bool)
-    df["Date"] = pd.to_datetime(df["Date"])
+    df["Date"] = pd.to_datetime(df["Date"], format="ISO8601")
     return df.sort_values(by="Date", ascending=False, ignore_index=True)
 
 
@@ -240,12 +240,12 @@ def _sample_proportionally(df, text_column, category_column, sample_size):
         target = max(1, int(np.ceil(len(cat_df) / total_rows * sample_size)))
         non_empty = cat_df[cat_df[text_column].notna() & (cat_df[text_column].str.strip() != "")]
         if len(non_empty) >= target:
-            parts.append(non_empty.sample(target))
+            parts.append(non_empty.sample(target, random_state=0))
         elif not non_empty.empty:
             rest = cat_df[~cat_df.index.isin(non_empty.index)]
-            parts.append(pd.concat([non_empty, rest.sample(target - len(non_empty), replace=True)]))
+            parts.append(pd.concat([non_empty, rest.sample(target - len(non_empty), replace=True, random_state=0)]))
         else:
-            parts.append(cat_df.sample(target, replace=True))
+            parts.append(cat_df.sample(target, replace=True, random_state=0))
     return pd.concat(parts)
 
 
