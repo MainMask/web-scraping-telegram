@@ -13,7 +13,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from telethon import TelegramClient, utils
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, ServerError, TimedOutError
 from telethon.tl.functions.messages import GetMessageReactionsListRequest
 from telethon.tl.types import PeerChannel, PeerUser, User
 
@@ -51,6 +51,13 @@ RESUME_MAX_WAIT = 300
 # a dropped connection: never swallowed as a per-message skip, always bubbles up
 # to the channel-level retry loop so the work is redone rather than lost.
 NET_ERRORS = (ConnectionError, OSError, asyncio.TimeoutError)
+
+# Transient server-side RPC failures (500 RPC_CALL_FAIL / RPC_MCGET_FAIL,
+# 503 TIMEOUT): Telegram is telling us to retry, so treat them like a dropped
+# connection — redo the whole post/channel rather than keep a half-scraped thread.
+# 400 (MSG_ID_INVALID on posts with no comments) and 403 (BROADCAST_FORBIDDEN on
+# channel-post reactors) are deliberately NOT here: those stay per-message skips.
+RETRYABLE_RPC = (ServerError, TimedOutError)
 
 
 def _progress_bar(frac: float, width: int = 20) -> str:
@@ -336,8 +343,8 @@ async def _collect_reactors(client, peer, ref: _ChannelRef, post_id: int, msg, t
             if not res.next_offset:
                 break
             offset = res.next_offset
-    except (*NET_ERRORS, FloodWaitError):  # disconnect / long soft ban: let the
-        raise                             # channel loop wait it out and redo, don't skip
+    except (*NET_ERRORS, FloodWaitError, *RETRYABLE_RPC):  # disconnect, soft ban, or a
+        raise                             # transient 500/503: redo the post, don't skip
     except Exception as exc:  # BroadcastForbidden, thread removed, ...
         print(f"  ! reactors for {ref.slug}/{post_id} ({target} {msg.id}): {exc}")
     return rows
@@ -380,8 +387,8 @@ async def _collect_comments(
             if with_reactors:
                 peer = disc_peer or getattr(c, "input_chat", None) or ref.arg
                 reactors += await _collect_reactors(client, peer, ref, message.id, c, "comment")
-    except (*NET_ERRORS, FloodWaitError):  # disconnect / long soft ban: let the
-        raise                             # channel loop wait it out and redo, don't skip
+    except (*NET_ERRORS, FloodWaitError, *RETRYABLE_RPC):  # disconnect, soft ban, or a
+        raise                             # transient 500/503: redo the post, don't skip
     except Exception as exc:  # thread just removed, ...
         print(f"  ! comments for {ref.slug}/{message.id}: {exc}")
     return comments, reactors
@@ -595,7 +602,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
                         except Exception as ce:
                             print(f"  ! reconnect failed: {ce}")
                         continue
-                    except NET_ERRORS as exc:
+                    except (*NET_ERRORS, *RETRYABLE_RPC) as exc:
                         attempt += 1
                         _write_checkpoint(i, last_id)
                         if attempt > RESUME_MAX_ATTEMPTS:
@@ -627,7 +634,7 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
                 save_table(_read_shards(ckpt_dir, "posts", start=snapshot_from),
                            partial, params.fmt)
                 snapshot_from = shard_index
-            except (*NET_ERRORS, FloodWaitError):  # bubble to the Ctrl-C/finally scope and out to run()
+            except (*NET_ERRORS, FloodWaitError, *RETRYABLE_RPC):  # bubble to the Ctrl-C/finally scope and out to run()
                 raise
             except Exception as exc:
                 print(f"{channel} error: {exc}")
@@ -694,7 +701,7 @@ def run(creds: Credentials, params: ScrapeParams) -> Path:
     rj = ckpt_dir / "resume.json"
     try:
         df = asyncio.run(_scrape(creds, params))
-    except (*NET_ERRORS, FloodWaitError, KeyboardInterrupt) as exc:
+    except (*NET_ERRORS, FloodWaitError, KeyboardInterrupt, *RETRYABLE_RPC) as exc:
         detail = f": {exc}" if str(exc) else ""
         print(SEP)
         print(f"Run stopped: {type(exc).__name__}{detail}")

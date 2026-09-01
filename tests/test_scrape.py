@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 from telethon import utils
-from telethon.errors import BroadcastForbiddenError, FloodWaitError
+from telethon.errors import BroadcastForbiddenError, FloodWaitError, RpcCallFailError
 from telethon.tl.types import Channel, PeerChannel, PeerUser, ReactionEmoji, User
 
 import telegramscrap.scrape as scrape
@@ -370,6 +370,36 @@ class ReactorDropClient(FakeClient):
         return await super().__call__(request)
 
 
+class ServerErrorDuringReactionsClient(FakeClient):
+    """A transient 500 (RPC_CALL_FAIL) lands once, inside the per-message reactions call."""
+    failed = False
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        type(self).failed = False
+
+    async def __call__(self, request):
+        if not type(self).failed:
+            type(self).failed = True
+            raise RpcCallFailError(request=None)
+        return await super().__call__(request)
+
+
+class ServerErrorAfterClient(FakeClient):
+    """Reactions work for the first call, then every call is a 500 that never clears."""
+    seen = 0
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        type(self).seen = 0
+
+    async def __call__(self, request):
+        type(self).seen += 1
+        if type(self).seen > 1:
+            raise RpcCallFailError(request=None)
+        return await super().__call__(request)
+
+
 def _partial(tmp_path):
     return tmp_path / "unit.test_partial"
 
@@ -501,6 +531,30 @@ def test_connection_error_during_reactions_triggers_retry(monkeypatch, tmp_path,
     assert list(pd.read_parquet(path)["Message ID"]) == ["30", "20"]  # nothing skipped
     assert "retry 1/" in capsys.readouterr().out
     assert len(ReactorDropClient.calls) == 2                          # channel restarted once
+
+
+def test_server_error_during_reactions_triggers_retry(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(scrape, "TelegramClient", ServerErrorDuringReactionsClient)
+    monkeypatch.setattr(scrape, "RESUME_BASE_WAIT", 0)
+
+    path = scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True))
+
+    assert list(pd.read_parquet(path)["Message ID"]) == ["30", "20"]  # thread redone, not truncated
+    assert "retry 1/" in capsys.readouterr().out
+    assert len(ServerErrorDuringReactionsClient.calls) == 2           # channel restarted once
+
+
+def test_persistent_server_error_stops_with_resume_hint(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(scrape, "TelegramClient", ServerErrorAfterClient)
+    monkeypatch.setattr(scrape, "RESUME_BASE_WAIT", 0)
+    monkeypatch.setattr(scrape, "RESUME_MAX_ATTEMPTS", 2)
+
+    with pytest.raises(SystemExit):
+        scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True))
+
+    out = capsys.readouterr().out
+    assert "telegramscrap scrape" in out and "--resume" in out
+    assert (_ckpt(tmp_path) / "resume.json").exists()                 # checkpoint left for --resume
 
 
 def test_resume_flag_reloads_checkpoint(monkeypatch, tmp_path, capsys):
