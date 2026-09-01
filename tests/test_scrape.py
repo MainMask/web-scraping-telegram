@@ -18,7 +18,7 @@ from telegramscrap.scrape import ScrapeParams
 _CHANNEL_PEER_ID = utils.get_peer_id(PeerChannel(888))
 
 
-def _msg(mid, date, text, *, replies=0, custom_reaction=False, sender=None, reacts=True):
+def _msg(mid, date, text, *, replies=0, empty_thread=False, custom_reaction=False, sender=None, reacts=True):
     return types.SimpleNamespace(
         id=mid,
         date=date,
@@ -36,7 +36,8 @@ def _msg(mid, date, text, *, replies=0, custom_reaction=False, sender=None, reac
                 count=3,
             )]
         ) if reacts else None,
-        replies=types.SimpleNamespace(comments=True, replies=replies, channel_id=1001) if replies else None,
+        replies=types.SimpleNamespace(comments=True, replies=replies, channel_id=1001)
+        if replies or empty_thread else None,
     )
 
 
@@ -86,11 +87,13 @@ class FakeClient:
     comment_ids = {999, 998}
     reaction_peers = []  # peers passed to GetMessageReactionsListRequest; reset per instance
     calls = []           # (channel, offset_id) for each main-branch iter_messages; reset per instance
+    reply_calls = []     # reply_to ids passed to iter_messages (GetReplies); reset per instance
     init_kwargs = {}     # kwargs the last instance was constructed with
 
     def __init__(self, *a, **k):
         type(self).reaction_peers = []
         type(self).calls = []
+        type(self).reply_calls = []
         type(self).init_kwargs = k
 
     async def start(self, **k):
@@ -127,6 +130,7 @@ class FakeClient:
 
     def iter_messages(self, channel, search=None, reply_to=None, offset_id=0):
         if reply_to is not None:
+            type(self).reply_calls.append(reply_to)
             async def replies():
                 for m in _thread_replies(reply_to):
                     yield m
@@ -768,3 +772,23 @@ def test_collect_post_returns_row_and_reactor_rows(tmp_path):
     assert row["Url"] == "https://t.me/SomeChannel/20"
     assert json.loads(row["Comments List"])[0]["Comment Author Username"] == "bob"
     assert {r["Message ID"] for r in reactors} == {999} and len(reactors) == 2
+
+
+def test_empty_thread_old_post_skips_getreplies(tmp_path):
+    # broadcast post, comments enabled, counter 0, settled: no GetReplies call
+    ref = scrape._channel_ref("https://t.me/SomeChannel/")
+    msg = _msg(20, datetime(2024, 6, 5, tzinfo=timezone.utc), "body", empty_thread=True)
+    client = FakeClient()
+    row, _ = asyncio.run(scrape._collect_post(client, ref, msg, _params(tmp_path)))
+    assert client.reply_calls == []
+    assert row["Comments List"] == "[]"
+
+
+def test_empty_thread_fresh_post_still_fetched(tmp_path):
+    # same, but the post is minutes old — the 0 counter may just be lagging, so fetch
+    ref = scrape._channel_ref("https://t.me/SomeChannel/")
+    msg = _msg(20, datetime.now(timezone.utc), "body", empty_thread=True)
+    client = FakeClient()
+    row, _ = asyncio.run(scrape._collect_post(client, ref, msg, _params(tmp_path)))
+    assert client.reply_calls == [20]
+    assert json.loads(row["Comments List"])[0]["Comment Author Username"] == "bob"

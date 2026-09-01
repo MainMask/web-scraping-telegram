@@ -5,7 +5,7 @@ import json
 import shlex
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import NamedTuple
 
@@ -34,6 +34,12 @@ FLOOD_MAX_ATTEMPTS = 12
 FLOOD_RETRY_BUFFER = 5  # extra seconds slept on top of the ban so we don't re-trip it
 # small pause after each reaction-list request to keep the burst rate down
 REACTOR_CALL_DELAY = 0.5
+
+# A channel post's comment counter (message.replies.replies) can briefly lag behind
+# reality on a very fresh post. Older than this, a 0 count is trusted as "no
+# comments" and the GetReplies call is skipped (saves one request per empty post
+# and keeps the log clean); within it, the thread is always fetched.
+RECENT_POST_WINDOW = timedelta(hours=48)
 
 # Keep reconnecting through long outages instead of aborting the run. Bounded
 # wall time ~ CONNECTION_RETRIES * (RETRY_DELAY + connect time) ~ 8-14h, enough
@@ -396,7 +402,12 @@ async def _collect_comments(
 
 async def _collect_post(client, ref: _ChannelRef, message, params: ScrapeParams) -> tuple[dict, list[dict]]:
     """One post row plus its reactor rows (comment reactors first, then post reactors)."""
-    has_thread = bool(message.replies and message.replies.comments)
+    # a 0 comment count is trusted only once the post has had time to settle
+    fresh = datetime.now(timezone.utc) - message.date < RECENT_POST_WINDOW
+    has_thread = bool(
+        message.replies and message.replies.comments
+        and (message.replies.replies or fresh)
+    )
     comments, reactors = (
         await _collect_comments(client, ref, message, with_reactors=params.with_reactors)
         if params.with_comments and has_thread
