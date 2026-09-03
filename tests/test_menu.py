@@ -133,6 +133,64 @@ def test_participants_argv(tmp_path, monkeypatch):
     _valid(argv)
 
 
+def _write_posts(tmp_path, name="Baza_posts.parquet", group="@c123",
+                 dates=("2024-01-02 10:00:00", "2024-06-30 12:00:00")):
+    import pandas as pd
+
+    (tmp_path / "output").mkdir(exist_ok=True)
+    pd.DataFrame({
+        "Group": [group] * len(dates),
+        "Date": list(dates),
+        "Message ID": list(range(10, 10 + len(dates))),
+    }).to_parquet(tmp_path / "output" / name, index=False)
+
+
+def test_verify_argv_prefills_from_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_posts(tmp_path)
+    from telegramscrap.menu import _verify_argv
+
+    argv = _verify_argv(_prompt(["1", "", "", "", "", ""]))  # pick #1, accept every default
+    assert argv == ["verify", "--input", "output/Baza_posts.parquet",
+                    "--channel", "-100123",
+                    "--date-min", "02.01.2024", "--date-max", "30.06.2024",
+                    "--output", "output/Baza_missed.parquet"]
+    _valid(argv)
+
+
+def test_verify_argv_overrides(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_posts(tmp_path)
+    from telegramscrap.menu import _verify_argv
+
+    argv = _verify_argv(_prompt(["1", "@realname", "01.01.2020", "31.12.2024",
+                                 "output/custom.parquet", "50"]))
+    assert argv[argv.index("--channel") + 1] == "@realname"
+    assert argv[argv.index("--date-min") + 1] == "01.01.2020"
+    assert argv[argv.index("--date-max") + 1] == "31.12.2024"
+    assert argv[argv.index("--output") + 1] == "output/custom.parquet"
+    assert argv[argv.index("--comment-sample") + 1] == "50"
+    _valid(argv)
+
+
+def test_verify_argv_no_metadata(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no data files -> every field asked as free text
+    from telegramscrap.menu import _verify_argv
+
+    argv = _verify_argv(_prompt(["some/posts.parquet", "@a", "01.01.2024",
+                                 "31.12.2024", "", ""]))
+    assert argv == ["verify", "--input", "some/posts.parquet", "--channel", "@a",
+                    "--date-min", "01.01.2024", "--date-max", "31.12.2024"]
+    _valid(argv)
+
+
+def test_menu_has_verify():
+    from telegramscrap.menu import _ACTIONS
+
+    labels = {entry[0] for entry in _ACTIONS.values()}
+    assert "verify" in labels and "login" in labels
+
+
 def test_menu_runs_selected_command_then_quits():
     calls = []
     answers = ["1", "@a", "2025-01-01", "2025-01-02", "t",

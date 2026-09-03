@@ -1,5 +1,6 @@
 """Interactive input()-based wizard that builds and runs a `telegramscrap` command."""
 
+import re
 import shlex
 from pathlib import Path
 
@@ -161,6 +162,52 @@ def _participants_argv(p: Prompt) -> list[str]:
     return argv
 
 
+def _guess_verify_defaults(path: str) -> dict:
+    """Best-effort channel + date bounds from a scraped posts file, so the menu can
+    pre-fill `verify`'s arguments instead of making the user retype them."""
+    from telegramscrap.datafiles import read_table
+    import pandas as pd
+
+    out: dict = {}
+    p = Path(path)
+    try:
+        try:
+            df = pd.read_parquet(p, columns=["Group", "Date"])
+        except Exception:
+            df = read_table(p)
+        groups = df["Group"].dropna() if "Group" in df.columns else []
+        if len(groups):
+            g = str(groups.iloc[0]).lstrip("@")
+            out["channel"] = (f"-100{g[1:]}" if g[:1] == "c" and g[1:].isdigit()
+                              else f"@{g}")
+        dates = pd.to_datetime(df["Date"], errors="coerce").dropna() if "Date" in df.columns else []
+        if len(dates):
+            out["date_min"] = dates.min().strftime("%d.%m.%Y")
+            out["date_max"] = dates.max().strftime("%d.%m.%Y")
+        stem = re.sub(r"(_posts)?\.(parquet|xlsx|csv)$", "", p.name)
+        out["output"] = str(p.with_name(f"{stem}_missed.parquet"))
+    except Exception:
+        return {}
+    return out
+
+
+def _verify_argv(p: Prompt) -> list[str]:
+    src = _ask_data_file(p, "Scraped posts file to verify (the *_posts file)")
+    g = _guess_verify_defaults(src)
+    argv = ["verify", "--input", src,
+            "--channel", p.text("Channel (@name or numeric id) — a guess from the file",
+                                g.get("channel", ""), required=True),
+            "--date-min", p.text("Date from (DD.MM.YYYY) — the scrape's --date-min",
+                                 g.get("date_min", ""), required=True),
+            "--date-max", p.text("Date to (DD.MM.YYYY) — the scrape's --date-max",
+                                 g.get("date_max", ""), required=True)]
+    out = p.text("Write missed ids to (blank = skip)", g.get("output", ""))
+    if out:
+        argv += ["--output", out]
+    _opt(argv, "--comment-sample", p.text("Also re-check N random comment threads (0 = skip)", "0"), "0")
+    return argv
+
+
 def _login_argv(p: Prompt) -> list[str]:
     return ["login"]
 
@@ -176,7 +223,8 @@ _ACTIONS = {
     "7": ("sample", "proportional per-category sample to .xlsx", _sample_argv),
     "8": ("filter", "keep rows matching keywords", _filter_argv),
     "9": ("links", "extract and count t.me links", _links_argv),
-    "10": ("login", "(re)authorise and save the session", _login_argv),
+    "10": ("verify", "probe the channel for posts the scrape missed", _verify_argv),
+    "11": ("login", "(re)authorise and save the session", _login_argv),
 }
 
 
