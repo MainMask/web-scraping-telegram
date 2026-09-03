@@ -111,6 +111,11 @@ class FakeClient:
     async def get_entity(self, arg):
         return types.SimpleNamespace(title="Fake Channel")
 
+    async def get_messages(self, channel, limit=1, offset_date=None):
+        msgs = [m for m in _main_messages()
+                if offset_date is None or m.date < offset_date]
+        return msgs[:limit]
+
     async def __call__(self, request):
         if type(request).__name__ != "GetMessageReactionsListRequest":
             raise NotImplementedError(request)
@@ -216,6 +221,14 @@ def test_scrape_end_to_end(fake_client, tmp_path, capsys):
     assert people.loc[777, "Username"] == "bob"
     assert people.loc[777, "Name"] == "Bob Ivanov"
     assert people.loc[777, "Comments"] == 1
+
+
+def test_progress_fraction_tracks_message_id_range(fake_client, tmp_path, capsys):
+    # _main_messages within [2024-01-01, 2024-12-31]: id_hi=30, id_lo=10, span=20.
+    scrape.run(Credentials(1, "h"), _params(tmp_path))
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "% " in ln and "id " in ln]
+    assert " 0.0%" in lines[0] and "id 30" in lines[0]      # first kept post: at id_hi
+    assert " 50.0%" in lines[1] and "id 20" in lines[1]     # halfway down the id range
 
 
 def test_scrape_no_comments_flag(fake_client, tmp_path):
@@ -359,6 +372,17 @@ class CtrlCClient(FakeClient):
         return gen()
 
 
+class CancelClient(FakeClient):
+    """asyncio cancels the task mid-run - what a real SIGINT does."""
+
+    def _main_gen(self, offset_id):
+        async def gen():
+            yield _msg(40, datetime(2025, 1, 1, tzinfo=timezone.utc), "too new")
+            yield _msg(30, datetime(2024, 6, 6, tzinfo=timezone.utc), "keep")
+            raise asyncio.CancelledError
+        return gen()
+
+
 class ReactorDropClient(FakeClient):
     """The connection drops once, inside the per-message reactions call."""
     dropped = False
@@ -490,6 +514,18 @@ def test_scrape_gives_up_and_hints_resume(monkeypatch, tmp_path, capsys):
 
 def test_keyboard_interrupt_checkpoints_and_hints(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(scrape, "TelegramClient", CtrlCClient)
+
+    with pytest.raises(SystemExit):
+        scrape.run(Credentials(1, "h"), _params(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "telegramscrap scrape" in out and "--resume" in out
+    meta = json.loads((_ckpt(tmp_path) / "resume.json").read_text())
+    assert meta["last_id"] == 30
+
+
+def test_async_cancel_checkpoints_and_hints(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(scrape, "TelegramClient", CancelClient)
 
     with pytest.raises(SystemExit):
         scrape.run(Credentials(1, "h"), _params(tmp_path))

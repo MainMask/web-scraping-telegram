@@ -73,7 +73,7 @@ def _progress_bar(frac: float, width: int = 20) -> str:
 
 
 # How often (in scraped posts) to flush the in-memory buffer to a checkpoint shard.
-CHECKPOINT_EVERY = 1000
+CHECKPOINT_EVERY = 150
 
 # One (person, message, reaction) is unique; a --resume overlap or a repeated
 # reaction-list page can re-emit a row, so exact repeats on this key are dropped.
@@ -556,6 +556,18 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
                     title = None
                 label = f'"{title}" ({channel})' if title else channel
                 print(f"=== ch {i + 1}/{n_channels}: {label} ===")
+                # progress is measured over the message-id range in [date_min, date_max]:
+                # two cheap limit=1 fetches give the newest and the just-below-floor ids.
+                try:
+                    _hi = await client.get_messages(ref.arg, limit=1, offset_date=params.date_max)
+                    _lo = await client.get_messages(ref.arg, limit=1, offset_date=params.date_min)
+                    id_hi = _hi[0].id if _hi else 0
+                    id_lo = _lo[0].id if _lo else 0
+                except Exception as exc:  # never let a progress probe kill the run
+                    print(f"  ! progress probe failed ({exc}); ETA will be approximate")
+                    id_hi = id_lo = 0
+                id_span = id_hi - id_lo
+                sess_start_id = last_id or id_hi  # last_id = resume cursor, else 0
                 while True:
                     try:
                         async for message in client.iter_messages(
@@ -575,10 +587,15 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
                             date_str = row["Date"]
 
                             now = time.monotonic() - start_time
-                            cf = _date_frac(message.date)                  # current channel fraction
+                            if id_span > 0:                                # current channel fraction
+                                cf = min(max((id_hi - message.id) / id_span, 0.0), 1.0)
+                            else:
+                                cf = _date_frac(message.date)             # probe failed: fall back
                             overall = (i + cf) / n_channels
-                            eta = (format_duration(now / overall - now)
-                                   if overall > 0.02 and now > 1 else "estimating")
+                            sess_ids = sess_start_id - message.id         # ids this process consumed
+                            eta = ("estimating"
+                                   if not (id_span > 0 and sess_ids > 0 and now > 30)
+                                   else format_duration(max(message.id - id_lo, 0) * now / sess_ids))
                             print(
                                 f"|{_progress_bar(overall)}| {overall * 100:5.1f}%  "
                                 f"ch {i + 1}/{n_channels} ({cf * 100:3.0f}%) "
@@ -654,7 +671,10 @@ async def _scrape(creds: Credentials, params: ScrapeParams) -> pd.DataFrame:
             spent = time.monotonic() - loop_start
             if spent < 60 and i < len(params.channels) - 1:
                 await asyncio.sleep(60 - spent)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # asyncio.run() turns a SIGINT into task cancellation, i.e. a
+        # CancelledError raised at the current await - not KeyboardInterrupt - so
+        # both must be caught here for `systemctl stop` to checkpoint.
         print()
         _write_checkpoint(i, last_id)
         raise
@@ -712,7 +732,8 @@ def run(creds: Credentials, params: ScrapeParams) -> Path:
     rj = ckpt_dir / "resume.json"
     try:
         df = asyncio.run(_scrape(creds, params))
-    except (*NET_ERRORS, FloodWaitError, KeyboardInterrupt, *RETRYABLE_RPC) as exc:
+    except (*NET_ERRORS, FloodWaitError, KeyboardInterrupt,
+            asyncio.CancelledError, *RETRYABLE_RPC) as exc:
         detail = f": {exc}" if str(exc) else ""
         print(SEP)
         print(f"Run stopped: {type(exc).__name__}{detail}")
