@@ -95,6 +95,7 @@ telegramscrap <command> [options]        # or:  python -m telegramscrap <command
 | `sample`  | proportional per-category sample to `.xlsx` |
 | `filter`  | keep rows matching keywords, add one 0/1 column per keyword |
 | `links`   | extract and count `t.me` links from `Content` (snowball sampling) |
+| `verify`  | probe the live channel for posts a scrape missed (id-gap + bounds check) |
 
 Run `telegramscrap <command> --help` for the full flag list.
 
@@ -216,6 +217,23 @@ step for you (`<name>_participants`) unless you pass `--no-participants`. `Usern
 blank when Telegram has none for that account (only the numeric `ID` identifies them);
 `Name` is only populated for data scraped after this feature was added.
 
+### Verify
+
+```bash
+telegramscrap verify --input output/Test_posts.parquet --channel @Test \
+  --date-min 01.01.2020 --date-max 31.12.2024 --output output/Test_missed.parquet
+```
+
+`scrape` walks the channel with `iter_messages`; `verify` cross-checks the result
+with `get_messages(ids=…)` (a different Telegram API path). It takes every message
+id absent from the scrape within the scraped range and asks the server what that id
+is: a deleted/never-existed id and a service message are fine, but a real message
+inside `--date-min…--date-max` is a **miss** and gets listed (and written to
+`--output`). It also checks that the scrape reached the channel's oldest in-window
+message. Exit code is non-zero if anything was missed. `--comment-sample N`
+additionally re-checks `N` random threads against the server's reply count.
+Needs a free session (not while a `--resume` run is using it).
+
 ---
 
 ## Output columns
@@ -257,6 +275,7 @@ telegramscrap/
   menu.py        interactive input()-based wizard over the CLI flags
   config.py      load TG_* credentials from .env
   scrape.py      async scraper (asyncio.run)
+  verify.py      cross-check a scrape against the live channel for missed posts
   analysis.py    combine / comments / participants / summary / sample / filter / links
   datafiles.py   read/write parquet·xlsx·csv, text cleaning
 tests/           offline tests for the helpers

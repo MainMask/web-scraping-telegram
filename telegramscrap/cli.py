@@ -126,6 +126,22 @@ def cmd_links(args) -> None:
     links(args.input, args.output)
 
 
+def cmd_verify(args) -> None:
+    from telegramscrap.config import load_credentials
+    from telegramscrap.scrape import parse_date
+    from telegramscrap.verify import VerifyParams, run
+
+    run(load_credentials(), VerifyParams(
+        input=args.input,
+        channel=args.channel,
+        date_min=parse_date(args.date_min),
+        date_max=parse_date(args.date_max, end_of_day=True),
+        session=args.session,
+        output=args.output or "",
+        comment_sample=args.comment_sample,
+    ))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="telegramscrap", description=__doc__)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -224,6 +240,21 @@ def build_parser() -> argparse.ArgumentParser:
     lk.add_argument("--input", required=True)
     lk.add_argument("--output", required=True)
     lk.set_defaults(func=cmd_links)
+
+    vf = sub.add_parser("verify",
+                        help="probe the live channel for posts the scrape missed")
+    vf.add_argument("--input", required=True,
+                    help="scraped posts parquet/xlsx (file, directory, or glob)")
+    vf.add_argument("--channel", required=True,
+                    help="the channel that was scraped (@name / t.me URL / numeric id)")
+    vf.add_argument("--date-min", required=True, help="same value as the scrape; DD.MM.YYYY or YYYY-MM-DD")
+    vf.add_argument("--date-max", required=True, help="same value as the scrape")
+    vf.add_argument("--session", default="telegramscrap",
+                    help="session name/path (default: ./telegramscrap.session)")
+    vf.add_argument("--output", help="write the flagged message ids to this parquet file")
+    vf.add_argument("--comment-sample", type=_non_negative_int, default=0,
+                    help="also re-check this many random comment threads against the server's reply count")
+    vf.set_defaults(func=cmd_verify)
 
     return parser
 
