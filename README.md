@@ -1,4 +1,4 @@
-# telegram-scraper — terminal edition
+# telegram-scraper
 
 A command-line tool for scraping and analysing data from **Telegram channels, groups and chats**
 using the [Telethon](https://docs.telethon.dev/) library. It extracts message content, author
