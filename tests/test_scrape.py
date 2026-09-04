@@ -11,9 +11,9 @@ from telethon import utils
 from telethon.errors import BroadcastForbiddenError, FloodWaitError, RpcCallFailError
 from telethon.tl.types import Channel, PeerChannel, PeerUser, ReactionEmoji, User
 
-import telegramscrap.scrape as scrape
-from telegramscrap.config import Credentials
-from telegramscrap.scrape import ScrapeParams
+import telegram_scraper.scrape as scrape
+from telegram_scraper.config import Credentials
+from telegram_scraper.scrape import ScrapeParams
 
 _CHANNEL_PEER_ID = utils.get_peer_id(PeerChannel(888))
 
@@ -506,7 +506,7 @@ def test_scrape_gives_up_and_hints_resume(monkeypatch, tmp_path, capsys):
         scrape.run(Credentials(1, "h"), _params(tmp_path))
 
     out = capsys.readouterr().out
-    assert "telegramscrap scrape" in out and "--resume" in out and "--name unit.test" in out
+    assert "telegram-scraper scrape" in out and "--resume" in out and "--name unit.test" in out
     meta = json.loads((_ckpt(tmp_path) / "resume.json").read_text())
     assert meta["last_id"] == 30 and meta["channel_index"] == 0
     assert len(pd.read_parquet(_ckpt(tmp_path) / "posts_part_00000.parquet")) == 1
@@ -519,7 +519,7 @@ def test_keyboard_interrupt_checkpoints_and_hints(monkeypatch, tmp_path, capsys)
         scrape.run(Credentials(1, "h"), _params(tmp_path))
 
     out = capsys.readouterr().out
-    assert "telegramscrap scrape" in out and "--resume" in out
+    assert "telegram-scraper scrape" in out and "--resume" in out
     meta = json.loads((_ckpt(tmp_path) / "resume.json").read_text())
     assert meta["last_id"] == 30
 
@@ -531,16 +531,16 @@ def test_async_cancel_checkpoints_and_hints(monkeypatch, tmp_path, capsys):
         scrape.run(Credentials(1, "h"), _params(tmp_path))
 
     out = capsys.readouterr().out
-    assert "telegramscrap scrape" in out and "--resume" in out
+    assert "telegram-scraper scrape" in out and "--resume" in out
     meta = json.loads((_ckpt(tmp_path) / "resume.json").read_text())
     assert meta["last_id"] == 30
 
 
 def test_resume_command_is_parseable(tmp_path):
-    from telegramscrap.cli import build_parser
+    from telegram_scraper.cli import build_parser
 
     p = _params(tmp_path, keyword="war", with_reactors=False, timeout=99)
-    argv = scrape._resume_command(p).split()[1:]  # drop the "telegramscrap" prog name
+    argv = scrape._resume_command(p).split()[1:]  # drop the "telegram-scraper" prog name
     ns = build_parser().parse_args(argv)
     assert ns.resume is True
     assert ns.name == "unit.test" and ns.keyword == "war" and ns.timeout == 99
@@ -548,7 +548,7 @@ def test_resume_command_is_parseable(tmp_path):
 
 
 def test_resume_command_uses_channels_file(tmp_path):
-    from telegramscrap.cli import build_parser
+    from telegram_scraper.cli import build_parser
 
     argv = scrape._resume_command(_params(tmp_path, channels_file="chans.txt")).split()[1:]
     assert "--channels-file" in argv and "chans.txt" in argv and "--channels" not in argv
@@ -593,7 +593,7 @@ def test_persistent_server_error_stops_with_resume_hint(monkeypatch, tmp_path, c
         scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True))
 
     out = capsys.readouterr().out
-    assert "telegramscrap scrape" in out and "--resume" in out
+    assert "telegram-scraper scrape" in out and "--resume" in out
     assert (_ckpt(tmp_path) / "resume.json").exists()                 # checkpoint left for --resume
 
 
@@ -783,7 +783,7 @@ def test_until_snapshot_is_incremental(fake_client, tmp_path, monkeypatch):
 
 
 def test_combine_ignores_resume_checkpoint(tmp_path):
-    from telegramscrap import analysis
+    from telegram_scraper import analysis
 
     pdir = _partial(tmp_path)
     (pdir / "checkpoint").mkdir(parents=True)

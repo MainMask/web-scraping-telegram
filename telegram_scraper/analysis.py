@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from telegramscrap.datafiles import read_table, resolve_inputs, save_table
+from telegram_scraper.datafiles import read_table, resolve_inputs, save_table
 
 _URL_RE = re.compile(r"http\S+|www\S+")
 _TME_RE = re.compile(r"(https?://t\.me/[^\s]+)")

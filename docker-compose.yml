@@ -1,11 +1,11 @@
 services:
-  telegramscrap:
+  telegram-scraper:
     build: .
-    image: telegramscrap
+    image: telegram-scraper
     env_file: .env
     init: true              # PID-1 signal forwarding: clean Ctrl-C / docker stop, no zombies
     # user: "1000:1000"   # uncomment to run unprivileged; ./data must be writable by that uid
     volumes:
-      - ./data:/data      # -> ./data/telegramscrap.session and ./data/output/
+      - ./data:/data      # -> ./data/telegram-scraper.session and ./data/output/
     stdin_open: true       # -it, so `login` and `menu` work
     tty: true

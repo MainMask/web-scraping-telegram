@@ -1,4 +1,4 @@
-"""Offline tests for `telegramscrap verify` (fake client, no Telegram network)."""
+"""Offline tests for `telegram-scraper verify` (fake client, no Telegram network)."""
 
 import types
 from datetime import datetime, timezone
@@ -7,10 +7,10 @@ import pandas as pd
 import pytest
 from telethon.errors import FloodWaitError
 
-import telegramscrap.verify as verify
-from telegramscrap.cli import build_parser, cmd_verify
-from telegramscrap.config import Credentials
-from telegramscrap.verify import VerifyParams
+import telegram_scraper.verify as verify
+from telegram_scraper.cli import build_parser, cmd_verify
+from telegram_scraper.config import Credentials
+from telegram_scraper.verify import VerifyParams
 
 
 def _m(mid, y, mo, d, *, service=False, replies=None):

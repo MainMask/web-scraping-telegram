@@ -1,11 +1,11 @@
-"""Command-line entry point: `telegramscrap <command>`."""
+"""Command-line entry point: `telegram-scraper <command>`."""
 
 import argparse
 import logging
 import re
 from pathlib import Path
 
-from telegramscrap import __version__
+from telegram_scraper import __version__
 
 
 def _positive_int(value: str) -> int:
@@ -34,8 +34,8 @@ def _read_channels(args) -> list[str]:
 
 
 def cmd_scrape(args) -> None:
-    from telegramscrap.config import load_credentials
-    from telegramscrap.scrape import ScrapeParams, parse_date, run
+    from telegram_scraper.config import load_credentials
+    from telegram_scraper.scrape import ScrapeParams, parse_date, run
 
     params = ScrapeParams(
         channels=_read_channels(args),
@@ -58,20 +58,20 @@ def cmd_scrape(args) -> None:
 
 
 def cmd_login(args) -> None:
-    from telegramscrap.config import load_credentials
-    from telegramscrap.login import login
+    from telegram_scraper.config import load_credentials
+    from telegram_scraper.login import login
 
     login(load_credentials(), args.session)
 
 
 def cmd_menu(args) -> None:
-    from telegramscrap.menu import run_menu
+    from telegram_scraper.menu import run_menu
 
     run_menu()
 
 
 def cmd_read(args) -> None:
-    from telegramscrap.datafiles import read_table, save_table
+    from telegram_scraper.datafiles import read_table, save_table
 
     df = read_table(args.input)
     print(df.head(args.head).to_string())
@@ -82,37 +82,37 @@ def cmd_read(args) -> None:
 
 
 def cmd_combine(args) -> None:
-    from telegramscrap.analysis import combine
+    from telegram_scraper.analysis import combine
 
     combine(args.input, args.output, [c.strip() for c in args.dedup_cols.split(",")])
 
 
 def cmd_comments(args) -> None:
-    from telegramscrap.analysis import explode_comments
+    from telegram_scraper.analysis import explode_comments
 
     explode_comments(args.input, args.output, args.format)
 
 
 def cmd_participants(args) -> None:
-    from telegramscrap.analysis import participants
+    from telegram_scraper.analysis import participants
 
     participants(args.input, args.output, args.reactors, args.format)
 
 
 def cmd_summary(args) -> None:
-    from telegramscrap.analysis import summary
+    from telegram_scraper.analysis import summary
 
     summary(args.input, args.output_base, args.date_col, args.group_col, args.comments_col)
 
 
 def cmd_sample(args) -> None:
-    from telegramscrap.analysis import sample
+    from telegram_scraper.analysis import sample
 
     sample(args.input, args.output, args.text_col, args.category_col, args.sample_size, args.min_length)
 
 
 def cmd_filter(args) -> None:
-    from telegramscrap.analysis import filter_keywords
+    from telegram_scraper.analysis import filter_keywords
 
     filter_keywords(
         args.input, args.output, args.content_col,
@@ -121,15 +121,15 @@ def cmd_filter(args) -> None:
 
 
 def cmd_links(args) -> None:
-    from telegramscrap.analysis import links
+    from telegram_scraper.analysis import links
 
     links(args.input, args.output)
 
 
 def cmd_verify(args) -> None:
-    from telegramscrap.config import load_credentials
-    from telegramscrap.scrape import parse_date
-    from telegramscrap.verify import VerifyParams, run
+    from telegram_scraper.config import load_credentials
+    from telegram_scraper.scrape import parse_date
+    from telegram_scraper.verify import VerifyParams, run
 
     run(load_credentials(), VerifyParams(
         input=args.input,
@@ -143,7 +143,7 @@ def cmd_verify(args) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="telegramscrap", description=__doc__)
+    parser = argparse.ArgumentParser(prog="telegram-scraper", description=__doc__)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=False)
 
@@ -151,8 +151,8 @@ def build_parser() -> argparse.ArgumentParser:
     mn.set_defaults(func=cmd_menu)
 
     lg = sub.add_parser("login", help="authorise once (asks for the Telegram code) and save the session")
-    lg.add_argument("--session", default="telegramscrap",
-                    help="session name/path (default: ./telegramscrap.session)")
+    lg.add_argument("--session", default="telegram-scraper",
+                    help="session name/path (default: ./telegram-scraper.session)")
     lg.set_defaults(func=cmd_login)
 
     s = sub.add_parser("scrape", help="scrape channels/groups into parquet or xlsx")
@@ -169,8 +169,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--format", choices=["excel", "parquet"], default="parquet",
                    help="parquet (default, lossless) or excel (capped at 32k chars/cell)")
     s.add_argument("--out-dir", default="output")
-    s.add_argument("--session", default="telegramscrap",
-                   help="session name/path (default: ./telegramscrap.session)")
+    s.add_argument("--session", default="telegram-scraper",
+                   help="session name/path (default: ./telegram-scraper.session)")
     s.add_argument("--resume", action="store_true",
                    help="continue an interrupted run from output/<name>_partial/checkpoint/ "
                         "(re-run the same command plus this flag)")
@@ -249,8 +249,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the channel that was scraped (@name / t.me URL / numeric id)")
     vf.add_argument("--date-min", required=True, help="same value as the scrape; DD.MM.YYYY or YYYY-MM-DD")
     vf.add_argument("--date-max", required=True, help="same value as the scrape")
-    vf.add_argument("--session", default="telegramscrap",
-                    help="session name/path (default: ./telegramscrap.session)")
+    vf.add_argument("--session", default="telegram-scraper",
+                    help="session name/path (default: ./telegram-scraper.session)")
     vf.add_argument("--output", help="write the flagged message ids to this parquet file")
     vf.add_argument("--comment-sample", type=_non_negative_int, default=0,
                     help="also re-check this many random comment threads against the server's reply count")
@@ -264,7 +264,7 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s  %(levelname)s  %(message)s",
                         datefmt="%H:%M:%S")
     args = build_parser().parse_args(argv)
-    if getattr(args, "func", None) is None:  # `telegramscrap` with no arguments
+    if getattr(args, "func", None) is None:  # `telegram-scraper` with no arguments
         cmd_menu(args)
         return
     args.func(args)

@@ -7,11 +7,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /src
 COPY pyproject.toml ./
-COPY telegramscrap ./telegramscrap
+COPY telegram_scraper ./telegram_scraper
 RUN --mount=type=cache,target=/root/.cache/pip pip install .
 
 # session file + output/ land here; mount a host dir over it
 WORKDIR /data
 
-ENTRYPOINT ["telegramscrap"]
+ENTRYPOINT ["telegram-scraper"]
 CMD ["menu"]

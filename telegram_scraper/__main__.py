@@ -1,4 +1,4 @@
-from telegramscrap.cli import main
+from telegram_scraper.cli import main
 
 if __name__ == "__main__":
     main()
