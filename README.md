@@ -140,8 +140,9 @@ per-post comment fetch), `--no-reactors` (see below), `--no-participants` (skip 
 By default the run also writes a separate `<name>_reactors` file with one
 row per *(user, message, reaction)*: who (`id` + `username`) put which emoji, and on what.
 It is **slow** — one extra API call per message that has reactions. Telegram
-refuses the reactors list for **broadcast-channel posts** (to prevent de-anonymisation), so
-those are skipped with a note; in practice this captures the reactions left on the
+refuses the reactors list for **broadcast-channel posts** (to prevent de-anonymisation),
+so those are skipped — without even the extra request when the channel reports its
+reactor list as hidden; in practice this captures the reactions left on the
 **comments** — with `--no-comments` there is almost nothing left to collect for a channel.
 Pass `--no-reactors` to skip it.
 

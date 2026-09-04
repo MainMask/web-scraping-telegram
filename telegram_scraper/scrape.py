@@ -301,10 +301,13 @@ async def _collect_reactors(client, peer, ref: _ChannelRef, post_id: int, msg, t
     """Per-user reaction list for one message (`target` is 'post' or 'comment').
 
     Telegram refuses this for broadcast-channel posts (BroadcastForbiddenError); like
-    _collect_comments, any RPC error is logged and that message is skipped.
+    _collect_comments, any RPC error is logged and that message is skipped. When the
+    message's reactions carry can_see_list=False, Telegram has already said the list
+    is hidden, so the doomed request is skipped before it is made.
     """
-    if not getattr(msg, "reactions", None):  # nothing reacted -> no API call
-        return []
+    reactions = getattr(msg, "reactions", None)
+    if not reactions or getattr(reactions, "can_see_list", None) is False:
+        return []  # nothing reacted, or Telegram hides the list -> no API call
     url = (
         f"{ref.url_base}/{post_id}?comment={msg.id}"
         if target == "comment"

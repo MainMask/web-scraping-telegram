@@ -24,7 +24,8 @@ def _out(tmp_path, kind, ext="parquet"):
     return next(tmp_path.glob(f"unit.test_{kind}_*.{ext}"))
 
 
-def _msg(mid, date, text, *, replies=0, empty_thread=False, custom_reaction=False, sender=None, reacts=True):
+def _msg(mid, date, text, *, replies=0, empty_thread=False, custom_reaction=False, sender=None,
+         reacts=True, can_see_list=None):
     return types.SimpleNamespace(
         id=mid,
         date=date,
@@ -40,7 +41,8 @@ def _msg(mid, date, text, *, replies=0, empty_thread=False, custom_reaction=Fals
                 reaction=types.SimpleNamespace(document_id=555) if custom_reaction
                 else types.SimpleNamespace(emoticon="👍"),
                 count=3,
-            )]
+            )],
+            can_see_list=can_see_list,
         ) if reacts else None,
         replies=types.SimpleNamespace(comments=True, replies=replies, channel_id=1001)
         if replies or empty_thread else None,
@@ -92,12 +94,14 @@ def _thread_replies(reply_to):
 class FakeClient:
     comment_ids = {999, 998}
     reaction_peers = []  # peers passed to GetMessageReactionsListRequest; reset per instance
+    reaction_ids = []    # message ids passed to GetMessageReactionsListRequest; reset per instance
     calls = []           # (channel, offset_id) for each main-branch iter_messages; reset per instance
     reply_calls = []     # reply_to ids passed to iter_messages (GetReplies); reset per instance
     init_kwargs = {}     # kwargs the last instance was constructed with
 
     def __init__(self, *a, **k):
         type(self).reaction_peers = []
+        type(self).reaction_ids = []
         type(self).calls = []
         type(self).reply_calls = []
         type(self).init_kwargs = k
@@ -126,6 +130,7 @@ class FakeClient:
         if type(request).__name__ != "GetMessageReactionsListRequest":
             raise NotImplementedError(request)
         type(self).reaction_peers.append(request.peer)
+        type(self).reaction_ids.append(request.id)
         if request.id in self.comment_ids:
             return _reactions_list_response()
         raise BroadcastForbiddenError(request=None)  # channel posts: Telegram says no
@@ -183,6 +188,25 @@ class FloodAfterClient(FakeClient):
         if type(self).seen > 1:
             raise FloodWaitError(request=None)
         return await super().__call__(request)
+
+
+class HiddenListClient(FakeClient):
+    """A broadcast channel whose posts report reactions.can_see_list=False."""
+
+    def _main_gen(self, offset_id):
+        msgs = [
+            _msg(30, datetime(2024, 6, 6, tzinfo=timezone.utc), "keep", can_see_list=False),
+            _msg(20, datetime(2024, 6, 5, tzinfo=timezone.utc), "with thread",
+                 replies=1, can_see_list=False),
+            _msg(10, datetime(2023, 1, 1, tzinfo=timezone.utc), "too old"),
+        ]
+
+        async def gen():
+            for m in msgs:
+                if offset_id and m.id >= offset_id:
+                    continue
+                yield m
+        return gen()
 
 
 @pytest.fixture
@@ -278,6 +302,18 @@ def test_scrape_reactors(fake_client, tmp_path):
     # comment reactions must target the discussion group (replies.channel_id), not
     # the broadcast channel — otherwise Telegram answers BroadcastForbiddenError
     assert any(getattr(p, "channel_id", None) == 1001 for p in FakeClient.reaction_peers)
+
+
+def test_scrape_reactors_skips_hidden_list(monkeypatch, tmp_path):
+    monkeypatch.setattr(scrape, "TelegramClient", HiddenListClient)
+    scrape.run(Credentials(1, "h"),
+               _params(tmp_path, with_reactors=True, with_participants=False))
+
+    # posts 30 and 20 report can_see_list=False -> the reactor list is never
+    # requested; only the linked thread's comment (can_see_list unset) is fetched
+    assert HiddenListClient.reaction_ids == [999]
+    r = pd.read_parquet(_out(tmp_path, "reactors"))
+    assert set(r["Message ID"]) == {999}
 
 
 def test_scrape_reactors_excel_format(fake_client, tmp_path):
