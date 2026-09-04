@@ -18,6 +18,12 @@ from telegram_scraper.scrape import ScrapeParams
 _CHANNEL_PEER_ID = utils.get_peer_id(PeerChannel(888))
 
 
+def _out(tmp_path, kind, ext="parquet"):
+    """The single scrape output file for `kind` (posts/reactors/participants), whose
+    name now carries the post-date span (`unit.test_<kind>_<from>-<to>.<ext>`)."""
+    return next(tmp_path.glob(f"unit.test_{kind}_*.{ext}"))
+
+
 def _msg(mid, date, text, *, replies=0, empty_thread=False, custom_reaction=False, sender=None, reacts=True):
     return types.SimpleNamespace(
         id=mid,
@@ -199,7 +205,7 @@ def _params(tmp_path, **kw):
 
 def test_scrape_end_to_end(fake_client, tmp_path, capsys):
     path = scrape.run(Credentials(1, "hash"), _params(tmp_path))
-    assert path.name == "unit.test_posts.parquet"
+    assert path.name == "unit.test_posts_05.06.2024-06.06.2024.parquet"  # kept posts span
 
     log = capsys.readouterr().out
     assert "%" in log and "ETA" in log and ("█" in log or "░" in log)  # progress bar
@@ -217,7 +223,7 @@ def test_scrape_end_to_end(fake_client, tmp_path, capsys):
     assert '"Comment Author Username": "[channel]"' in df.iloc[1]["Comments List"]  # anon reply
     assert df.iloc[0]["Comments List"] == "[]"           # post 30 had no thread
 
-    people = pd.read_parquet(tmp_path / "unit.test_participants.parquet").set_index("ID")
+    people = pd.read_parquet(_out(tmp_path, "participants")).set_index("ID")
     assert people.loc[777, "Username"] == "bob"
     assert people.loc[777, "Name"] == "Bob Ivanov"
     assert people.loc[777, "Comments"] == 1
@@ -248,7 +254,7 @@ def test_scrape_numeric_channel_id(fake_client, tmp_path, capsys):
 def test_scrape_reactors(fake_client, tmp_path):
     scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True))
 
-    files = list(tmp_path.glob("unit.test_reactors.parquet"))
+    files = list(tmp_path.glob("unit.test_reactors_*.parquet"))
     assert len(files) == 1
     r = pd.read_parquet(files[0])
 
@@ -266,7 +272,7 @@ def test_scrape_reactors(fake_client, tmp_path):
     assert by_id.loc[_CHANNEL_PEER_ID, "Reactor Username"] == "[channel]"
     assert by_id.loc[_CHANNEL_PEER_ID, "Reactor Name"] == "Disc Grp"
 
-    people = pd.read_parquet(tmp_path / "unit.test_participants.parquet").set_index("ID")
+    people = pd.read_parquet(_out(tmp_path, "participants")).set_index("ID")
     assert people.loc[777, "Reactions"] >= 1             # reactor folded into participants
 
     # comment reactions must target the discussion group (replies.channel_id), not
@@ -276,7 +282,7 @@ def test_scrape_reactors(fake_client, tmp_path):
 
 def test_scrape_reactors_excel_format(fake_client, tmp_path):
     scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True, fmt="excel"))
-    r = pd.read_excel(tmp_path / "unit.test_reactors.xlsx")
+    r = pd.read_excel(_out(tmp_path, "reactors", "xlsx"))
     assert set(r["Message ID"]) == {999} and not r.duplicated().any()
 
 
@@ -288,7 +294,7 @@ def test_flood_wait_is_waited_out_then_resumes(monkeypatch, tmp_path, capsys):
                       _params(tmp_path, with_reactors=True, with_participants=False))
 
     assert list(pd.read_parquet(path)["Message ID"]) == ["30", "20"]  # nothing skipped
-    r = pd.read_parquet(tmp_path / "unit.test_reactors.parquet")
+    r = pd.read_parquet(_out(tmp_path, "reactors"))
     assert set(r["Message ID"]) == {999}                  # reactors collected after the wait
     assert "FLOOD_WAIT" in capsys.readouterr().out
 
@@ -492,7 +498,7 @@ def test_scrape_resumes_after_connection_error(monkeypatch, tmp_path, capsys):
     assert FlakyClient.calls[1][1] == 30                  # restarted just past the last saved id
     assert "retry 1/" in capsys.readouterr().out
 
-    r = pd.read_parquet(tmp_path / "unit.test_reactors.parquet")
+    r = pd.read_parquet(_out(tmp_path, "reactors"))
     assert set(r["Message ID"]) == {999}                  # comment reactors collected once
     assert len(r) == 2 and not r.duplicated().any()
 
@@ -722,7 +728,7 @@ def test_run_dedups_reactor_rows(monkeypatch, tmp_path):
 
     monkeypatch.setattr(scrape, "_scrape", fake_scrape)
     scrape.run(Credentials(1, "h"), _params(tmp_path, with_reactors=True, with_participants=False))
-    r = pd.read_parquet(tmp_path / "unit.test_reactors.parquet")
+    r = pd.read_parquet(_out(tmp_path, "reactors"))
     assert len(r) == 3                                     # (1,7,🔥) (1,8,👍) (2,9,❤)
     assert not r.duplicated().any()
     assert sorted(r["Message ID"]) == [1, 1, 2]

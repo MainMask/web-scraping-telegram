@@ -44,7 +44,8 @@ docker compose run --rm telegram-scraper scrape \
 docker compose run --rm telegram-scraper menu
 
 # analysis commands work the same (paths are relative to /data)
-docker compose run --rm telegram-scraper read output/Test_posts.parquet --head 20
+# the _<from>-<to> suffix is the span of posts actually collected — check output/ for the real name
+docker compose run --rm telegram-scraper read output/Test_posts_02.01.2024-30.01.2024.parquet --head 20
 ```
 
 - `./data/` holds the session and all output — back it up, keep it private.
@@ -78,7 +79,7 @@ just means logging in again.
 > `python -m telegram_scraper` replaces `python -m telegramscrap` and you need to reinstall
 > (`pip install .` / `docker compose build`) to refresh the entry point. The default session
 > file is now `telegram-scraper.session`; rename the old `telegramscrap.session` (or run
-> `login` again).
+> `login` again). Scrape outputs now carry a `_<from>-<to>` date span in their names.
 
 ---
 
@@ -161,15 +162,17 @@ Comments are fetched only for posts that actually have a linked discussion threa
 Dates may be written as `DD.MM.YYYY` (e.g. `15.10.2024`) or ISO `YYYY-MM-DD`. Both
 `--date-min` and `--date-max` are **inclusive**; `--date-max` covers the whole day (UTC).
 
-Output files land in `--out-dir`, named after `--name`:
+Output files land in `--out-dir`, named after `--name` with the scraped post-date
+span appended as `_<from>-<to>` (both `DD.MM.YYYY`, the first and last post actually
+collected):
 
-- `<name>_posts.<ext>` — the full run: one row per post, comments in the `Comments List` column.
+- `<name>_posts_<from>-<to>.<ext>` — the full run: one row per post, comments in the `Comments List` column.
   Normalised on the way out (like `combine`): duplicates dropped on `Group` + `Message ID`,
   a `Comments` count column added, `Date` parsed to a real datetime, rows sorted newest-first.
-- `<name>_participants.<ext>` — unless `--no-participants`; one row per unique person who
+- `<name>_participants_<from>-<to>.<ext>` — unless `--no-participants`; one row per unique person who
   commented or reacted: `ID, Username, Name, Comments, Reactions, Total`.
   Skipped with a note when there is nothing to build.
-- `<name>_reactors.<ext>` — unless `--no-reactors`; one row per *(user, message, reaction)*:
+- `<name>_reactors_<from>-<to>.<ext>` — unless `--no-reactors`; one row per *(user, message, reaction)*:
   `Type, Target, Group, Message ID, Post ID, Url, Reactor ID, Reactor Username, Reactor Name, Reaction, Date`
 - `<name>_partial/` — `<slug>_until_NNNNN` snapshots written after each channel
   (post-shaped, so `combine --input <name>_partial` merges just these). The resume
@@ -182,8 +185,9 @@ Output files land in `--out-dir`, named after `--name`:
   migrated to a shard automatically on `--resume`. The whole `checkpoint/` folder is
   removed on a clean finish.
 
-Re-running with the same `--name` overwrites the previous
-`<name>_posts` / `<name>_participants` / `<name>_reactors`.
+Re-running overwrites the previous `<name>_posts` / `<name>_participants` /
+`<name>_reactors` only when the post-date span comes out identical; a different span
+lands in new files.
 
 ### Interruptions
 
@@ -202,9 +206,9 @@ differ from the interrupted job. (After a hard power-off, nothing is printed —
 ### Analyse
 
 ```bash
-telegram-scraper combine      --input 'output/*_posts.parquet' --output output/unified.parquet
+telegram-scraper combine      --input 'output/*_posts_*.parquet' --output output/unified.parquet
 telegram-scraper comments     --input output/unified.parquet --output output/comments.parquet
-telegram-scraper participants --input output/Test_posts.parquet --output output/people.xlsx
+telegram-scraper participants --input output/Test_posts_02.01.2024-30.01.2024.parquet --output output/people.xlsx
 telegram-scraper summary  --input output/unified.parquet --output-base output/resume
 telegram-scraper filter   --input output/unified.parquet --output output/kw --keywords "Trump,Biden,Kamala"
 telegram-scraper sample   --input output/unified.parquet --output output/sample.xlsx --sample-size 10000
@@ -226,7 +230,7 @@ blank when Telegram has none for that account (only the numeric `ID` identifies 
 ### Verify
 
 ```bash
-telegram-scraper verify --input output/Test_posts.parquet --channel @Test \
+telegram-scraper verify --input output/Test_posts_02.01.2024-30.01.2024.parquet --channel @Test \
   --date-min 01.01.2020 --date-max 31.12.2024 --output output/Test_missed.parquet
 ```
 

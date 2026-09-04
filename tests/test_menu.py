@@ -158,6 +158,18 @@ def test_verify_argv_prefills_from_file(tmp_path, monkeypatch):
     _valid(argv)
 
 
+def test_verify_argv_prefills_from_dated_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_posts(tmp_path, name="Baza_posts_02.01.2024-30.06.2024.parquet")
+    from telegram_scraper.menu import _verify_argv
+
+    argv = _verify_argv(_prompt(["1", "", "", "", "", ""]))
+    assert argv[:3] == ["verify", "--input",
+                        "output/Baza_posts_02.01.2024-30.06.2024.parquet"]
+    assert argv[-2:] == ["--output", "output/Baza_missed.parquet"]  # span stripped, not kept
+    _valid(argv)
+
+
 def test_verify_argv_overrides(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_posts(tmp_path)

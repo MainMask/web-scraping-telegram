@@ -6,7 +6,8 @@ import pandas as pd
 import pytest
 
 from telegram_scraper.analysis import (
-    _TME_BASE_RE, _TME_RE, _count_comments, combine, explode_comments, participants,
+    _TME_BASE_RE, _TME_RE, _count_comments, _sibling_reactors, combine,
+    explode_comments, participants,
 )
 from telegram_scraper.cli import build_parser
 from telegram_scraper.datafiles import clean_xml_text, format_duration, read_table, save_table
@@ -171,6 +172,18 @@ def test_participants_merges_commenters_and_reactors(tmp_path):
     assert p.loc[5, "Name"] == "Bob B"
     assert (p.loc[9, "Comments"], p.loc[9, "Reactions"]) == (0, 1)
     assert p.loc[9, "Name"] == "Ann A"
+
+
+def test_sibling_reactors_matches_dated_names(tmp_path):
+    span = "_01.05.2022-24.07.2026"
+    (tmp_path / f"Baza_reactors{span}.parquet").write_bytes(b"x")
+    posts = tmp_path / f"Baza_posts{span}.parquet"
+    posts.write_bytes(b"x")
+    assert _sibling_reactors(str(posts)) == [tmp_path / f"Baza_reactors{span}.parquet"]
+
+    # undated (pre-feature) layout still resolves
+    (tmp_path / "Old_reactors.parquet").write_bytes(b"x")
+    assert _sibling_reactors(str(tmp_path / "Old_posts.parquet")) == [tmp_path / "Old_reactors.parquet"]
 
 
 def test_participants_errors_when_nobody(tmp_path):

@@ -184,7 +184,7 @@ def _guess_verify_defaults(path: str) -> dict:
         if len(dates):
             out["date_min"] = dates.min().strftime("%d.%m.%Y")
             out["date_max"] = dates.max().strftime("%d.%m.%Y")
-        stem = re.sub(r"(_posts)?\.(parquet|xlsx|csv)$", "", p.name)
+        stem = re.sub(r"(_posts(_\d{2}\.\d{2}\.\d{4}-\d{2}\.\d{2}\.\d{4})?)?\.(parquet|xlsx|csv)$", "", p.name)
         out["output"] = str(p.with_name(f"{stem}_missed.parquet"))
     except Exception:
         return {}

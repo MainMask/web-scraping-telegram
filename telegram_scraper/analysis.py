@@ -147,9 +147,10 @@ def _first_nonempty(series) -> str:
 def _sibling_reactors(input_path: str) -> list[Path]:
     """The <name>_reactors file next to a <name>_posts input, if it exists."""
     p = Path(input_path)
-    base = p.stem[:-len("_posts")] if p.stem.endswith("_posts") else p.stem
+    m = re.search(r"^(?P<base>.*)_posts(?P<rng>_\d{2}\.\d{2}\.\d{4}-\d{2}\.\d{2}\.\d{4})?$", p.stem)
+    base, rng = (m["base"], m["rng"] or "") if m else (p.stem, "")
     for ext in (".parquet", ".xlsx"):
-        cand = p.with_name(f"{base}_reactors{ext}")
+        cand = p.with_name(f"{base}_reactors{rng}{ext}")
         if cand.exists():
             return [cand]
     return []

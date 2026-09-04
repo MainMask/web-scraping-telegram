@@ -741,9 +741,11 @@ def run(creds: Credentials, params: ScrapeParams) -> Path:
             print(f"\nContinue from the last checkpoint ({rj}) with:\n\n"
                   f"    {_resume_command(params)}\n")
         raise SystemExit(1)
+    span = ""
     if not df.empty:
         df = normalize_posts(df)
-    path = save_table(df, params.out_dir / f"{params.name}_posts", params.fmt)
+        span = f"_{df['Date'].min():%d.%m.%Y}-{df['Date'].max():%d.%m.%Y}"
+    path = save_table(df, params.out_dir / f"{params.name}_posts{span}", params.fmt)
     print(f"Posts:    {path}  ({len(df)} rows)")
 
     r_path = None
@@ -751,16 +753,16 @@ def run(creds: Credentials, params: ScrapeParams) -> Path:
         if params.fmt == "parquet":
             # streams the shards, deduplicating on REACTOR_DEDUP_KEY (see _consolidate_reactors)
             r_path, n_reactors = _consolidate_reactors(
-                ckpt_dir, params.out_dir / f"{params.name}_reactors.parquet")
+                ckpt_dir, params.out_dir / f"{params.name}_reactors{span}.parquet")
         else:  # excel: small runs only, keep the in-memory path
             rdf = _read_shards(ckpt_dir, "reactors").drop_duplicates(
                 subset=REACTOR_DEDUP_KEY, ignore_index=True)
-            r_path = save_table(rdf, params.out_dir / f"{params.name}_reactors", params.fmt)
+            r_path = save_table(rdf, params.out_dir / f"{params.name}_reactors{span}", params.fmt)
             n_reactors = len(rdf)
         print(f"Reactors: {r_path}  ({n_reactors} rows)")
 
     if params.with_participants:
-        p_out = params.out_dir / f"{params.name}_participants"
+        p_out = params.out_dir / f"{params.name}_participants{span}"
         try:
             participants(str(path), str(p_out),
                          reactors=str(r_path) if r_path else "", fmt=params.fmt)
